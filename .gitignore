@@ -1,0 +1,14 @@
+# 二进制与运行产物
+stock-scanner/stock-scanner
+stock-portfolio/stock-portfolio
+stock-scanner/cache/
+stock-portfolio/cache/
+stock-scanner/data/
+stock-portfolio/data/
+
+# 备份文件
+*.bak.*
+*.old.*
+
+# 系统文件
+.DS_Store

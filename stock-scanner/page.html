@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>实时优质股筛选 V9</title>
+    <script src="/stock/static/echarts.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #f5f5f5; }
+        .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
+        .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 25px; border-radius: 10px; margin-bottom: 15px; }
+        .header h1 { font-size: 26px; margin-bottom: 8px; }
+        .header p { opacity: 0.9; font-size: 13px; }
+        .update-time { font-size: 12px; margin-top: 8px; opacity: 0.8; }
+        .refresh-btn { display: inline-block; margin-top: 10px; padding: 8px 22px; border: none; border-radius: 18px; cursor: pointer; font-size: 13px; font-weight: bold; background: #fff; color: #667eea; box-shadow: 0 2px 6px rgba(0,0,0,0.2); transition: all 0.3s; }
+        .refresh-btn:hover { transform: translateY(-2px); }
+        .refresh-btn:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
+        .sectors { display: flex; gap: 8px; margin-bottom: 15px; flex-wrap: wrap; }
+        .sector-btn { padding: 8px 16px; border: none; border-radius: 18px; cursor: pointer; font-size: 13px; background: white; box-shadow: 0 2px 5px rgba(0,0,0,0.1); transition: all 0.3s; }
+        .sector-btn:hover { transform: translateY(-2px); }
+        .sector-btn.active { background: #667eea; color: white; }
+        .stats { display: flex; gap: 12px; margin-bottom: 15px; flex-wrap: wrap; }
+        .stat-card { background: white; padding: 12px 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); text-align: center; }
+        .stat-value { font-size: 22px; font-weight: bold; color: #667eea; }
+        .stat-label { font-size: 11px; color: #666; margin-top: 4px; }
+        .stock-table { background: white; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); overflow: hidden; }
+        .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+        table { width: 100%; border-collapse: collapse; min-width: 750px; }
+        th { background: #f8f9fa; padding: 10px 6px; text-align: center; font-weight: 600; font-size: 12px; color: #333; cursor: pointer; user-select: none; white-space: nowrap; }
+        th:hover { background: #eef0f4; }
+        td { padding: 8px 6px; text-align: center; border-bottom: 1px solid #e9ecef; font-size: 12px; }
+        tr:hover { background: #f8f9fa; }
+        .stock-name { color: #667eea; cursor: pointer; font-weight: 500; }
+        .stock-name:hover { text-decoration: underline; }
+        .positive { color: #e74c3c; font-weight: bold; }
+        .negative { color: #27ae60; }
+        .flow-in { color: #e74c3c; }
+        .flow-out { color: #27ae60; }
+        .hmm-icon { font-size: 14px; margin-left: 4px; }
+        .loading { text-align: center; padding: 40px; color: #666; }
+        .cache-info { font-size: 11px; color: #999; margin-top: 10px; text-align: center; }
+        .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 1000; }
+        .modal-content { background: white; margin: 20px auto; padding: 20px; width: 95%; max-width: 1300px; border-radius: 10px; max-height: 95vh; overflow-y: auto; }
+        .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
+        .close-btn { font-size: 30px; cursor: pointer; color: #666; }
+        .chart-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; }
+        .chart-box { background: #fafafa; border-radius: 8px; padding: 10px; }
+        .chart-box-full { grid-column: 1 / -1; }
+        .chart-title { font-size: 13px; font-weight: 600; color: #333; margin-bottom: 6px; }
+        .chart-canvas { width: 100%; height: 280px; }
+        .state-legend { display: flex; gap: 12px; margin: 8px 0; flex-wrap: wrap; font-size: 12px; }
+        .state-item { display: flex; align-items: center; gap: 4px; }
+        .state-dot { width: 10px; height: 10px; border-radius: 3px; }
+        .forecast-badge { display: inline-block; padding: 1px 6px; border-radius: 8px; font-size: 10px; font-weight: bold; }
+        .forecast-good { background: #d4edda; color: #155724; }
+        .forecast-bad { background: #f8d7da; color: #721c24; }
+        .forecast-neutral { background: #fff3cd; color: #856404; }
+        @media (max-width: 768px) {
+            .container { padding: 10px; }
+            .header { padding: 18px; }
+            .header h1 { font-size: 20px; }
+            .stat-card { padding: 10px 14px; flex: 1 1 45%; }
+            .stat-value { font-size: 18px; }
+            table { min-width: 650px; }
+            th { padding: 8px 4px; font-size: 11px; }
+            td { padding: 6px 4px; font-size: 11px; }
+            .modal-content { width: 98%; margin: 10px auto; padding: 12px; }
+            .chart-grid { grid-template-columns: 1fr; }
+            .chart-box-full { grid-column: 1; }
+        }
+        @media (max-width: 480px) {
+            .stat-card { flex: 1 1 100%; }
+            table { min-width: 580px; }
+            th, td { font-size: 10px; padding: 6px 3px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📈 实时优质股筛选 V9</h1>
+            <p>行业+概念板块(涨幅前5+主力净流入前5) → 优质股(ROE>0,扣非增长>0) → 按扣非净利同比降序</p>
+            <p class="update-time" id="updateTime">数据更新时间: 加载中...</p>
+            <button class="refresh-btn" id="refreshBtn" onclick="loadData(true)">查询</button>
+        </div>
+        <div class="sectors" id="sectorBar">
+            <button class="sector-btn active" onclick="filterSector('all', this)">全部板块</button>
+            <button class="sector-btn" disabled>加载中...</button>
+        </div>
+        <div class="stats">
+            <div class="stat-card"><div class="stat-value" id="stockCount">0</div><div class="stat-label">优质股</div></div>
+            <div class="stat-card"><div class="stat-value" id="avgRoe">-</div><div class="stat-label">平均ROE</div></div>
+            <div class="stat-card"><div class="stat-value" id="avgGrowth">-</div><div class="stat-label">平均扣非增长</div></div>
+            <div class="stat-card"><div class="stat-value" id="preCount">-</div><div class="stat-label">预增/扭亏</div></div>
+        </div>
+        <div class="stock-table">
+            <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>代码</th>
+                        <th>名称</th>
+                        <th onclick="sortBy('price')">现价 ↕</th>
+                        <th onclick="sortBy('change')">涨跌 ↕</th>
+                        <th onclick="sortBy('flow_ratio')">净流占比% ↕</th>
+                        <th onclick="sortBy('roe')">ROE ↕</th>
+                        <th onclick="sortBy('growth')">扣非净利同比 ↕</th>
+                        <th>预告类型</th>
+                        <th>预报日期</th>
+                    </tr>
+                </thead>
+                <tbody id="stock-list">
+                    <tr><td colspan="9" class="loading">加载中...</td></tr>
+                </tbody>
+            </table>
+            </div>
+        </div>
+        <div class="cache-info" id="cacheInfo">👍=HMM最后一格(强势) 👌=HMM倒数第二格 | 过滤:续亏/增亏/首亏/预减/ROE&lt;0/扣非增长&lt;0</div>
+    </div>
+    <div id="chartModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="modalTitle">HMM分析</h2>
+                <span class="close-btn" onclick="closeModal()">&times;</span>
+            </div>
+            <div id="chartContent"><div class="loading" style="padding:40px;">正在加载HMM分析...</div></div>
+        </div>
+    </div>
+    <script>
+        window.addEventListener('error', function(e) {
+            if (e.filename && (e.filename.startsWith('moz-extension:') || e.filename.startsWith('chrome-extension:'))) return;
+        });
+        let allStocks = [], sortKey = 'growth', sortAsc = false, currentSector = 'all';
+        const apiPrefix = window.location.pathname.includes('/stock') ? '/stock/api' : '/api';
+
+        async function loadData(fresh) {
+            const btn = document.getElementById('refreshBtn');
+            if (fresh && btn) { btn.disabled = true; btn.textContent = '查询中...'; }
+            try {
+                const url = apiPrefix + '/stocks?priceMax=20' + (fresh ? '&fresh=1' : '');
+                const resp = await fetch(url);
+                const data = await resp.json();
+                allStocks = data.stocks || [];
+                renderSectors(data.sectors || []);
+                renderStocks(sortStocks(allStocks));
+                updateStats();
+                document.getElementById('updateTime').textContent = '数据更新时间: ' + (data.cached_at || '');
+            } catch(e) {
+                document.getElementById('stock-list').innerHTML = '<tr><td colspan="9" class="loading">加载失败: ' + e.message + '</td></tr>';
+            } finally {
+                if (fresh && btn) { btn.disabled = false; btn.textContent = '查询'; }
+            }
+        }
+        function renderSectors(sectors) {
+            const bar = document.getElementById('sectorBar');
+            let html = '<button class="sector-btn active" onclick="filterSector(\'all\', this)">全部板块</button>';
+            sectors.forEach(s => {
+                html += '<button class="sector-btn" onclick="filterSector(\'' + s.name + '\', this)">' + s.name + ' <span style="opacity:0.7;">+' + s.change + '%</span></button>';
+            });
+            bar.innerHTML = html;
+        }
+        function filterSector(sector, btn) {
+            currentSector = sector;
+            document.querySelectorAll('.sector-btn').forEach(b => b.classList.remove('active'));
+            if (btn) btn.classList.add('active');
+            const filtered = sector === 'all' ? allStocks : allStocks.filter(s => s.sector === sector);
+            renderStocks(sortStocks(filtered));
+        }
+        function sortStocks(stocks) {
+            const sorted = [...stocks];
+            sorted.sort((a, b) => {
+                let va = a[sortKey], vb = b[sortKey];
+                if (['growth','roe','flow_ratio','change','price'].includes(sortKey)) {
+                    va = (va !== null && va !== undefined && !isNaN(va)) ? va : -999999;
+                    vb = (vb !== null && vb !== undefined && !isNaN(vb)) ? vb : -999999;
+                }
+                if (typeof va === 'string') return sortAsc ? va.localeCompare(vb) : vb.localeCompare(va);
+                return sortAsc ? va - vb : vb - va;
+            });
+            return sorted;
+        }
+        function sortBy(key) {
+            if (sortKey === key) sortAsc = !sortAsc;
+            else { sortKey = key; sortAsc = (key === 'price'); }
+            const filtered = currentSector === 'all' ? allStocks : allStocks.filter(s => s.sector === currentSector);
+            renderStocks(sortStocks(filtered));
+        }
+        function fmtNum(v, dec) {
+            if (v === null || v === undefined || v === '-' || isNaN(v)) return '-';
+            return Number(v).toFixed(dec || 2);
+        }
+        function renderStocks(stocks) {
+            const tbody = document.getElementById('stock-list');
+            if (!stocks.length) { tbody.innerHTML = '<tr><td colspan="9" class="loading">暂无符合条件的优质股</td></tr>'; return; }
+            let html = '';
+            stocks.forEach(s => {
+                const changeClass = s.change >= 0 ? 'positive' : 'negative';
+                const changeSign = s.change >= 0 ? '+' : '';
+                const flowClass = s.flow_ratio >= 0 ? 'flow-in' : 'flow-out';
+                const flowSign = s.flow_ratio >= 0 ? '+' : '';
+                const roeClass = (s.roe || 0) >= 0 ? 'positive' : 'negative';
+                const growthClass = (s.growth || 0) >= 0 ? 'positive' : 'negative';
+                const growthSign = (s.growth || 0) >= 0 ? '+' : '';
+                const hmmIcon = s.hmm_pos === 1 ? '<span class="hmm-icon">👍</span>' : (s.hmm_pos === 2 ? '<span class="hmm-icon">👌</span>' : '');
+                html += '<tr>';
+                html += '<td>' + s.code + '</td>';
+                html += '<td><span class="stock-name" onclick="showChart(\'' + s.code + '\', \'' + s.name + '\')">' + s.name + '</span></td>';
+                html += '<td><strong>¥' + fmtNum(s.price, 2) + '</strong>' + hmmIcon + '</td>';
+                html += '<td class="' + changeClass + '">' + changeSign + fmtNum(s.change, 2) + '%</td>';
+                html += '<td class="' + flowClass + '">' + flowSign + fmtNum(s.flow_ratio, 2) + '%</td>';
+                html += '<td class="' + roeClass + '">' + fmtNum(s.roe, 2) + '%</td>';
+                html += '<td class="' + growthClass + '">' + growthSign + fmtNum(s.growth, 2) + '%</td>';
+                html += '<td>' + (s.forecast_type || '-') + '</td>';
+                html += '<td>' + (s.forecast_date ? String(s.forecast_date).substring(0,10) : '-') + '</td>';
+                html += '</tr>';
+            });
+            tbody.innerHTML = html;
+        }
+        function updateStats() {
+            document.getElementById('stockCount').textContent = allStocks.length;
+            const roes = allStocks.map(s => s.roe).filter(v => v > 0);
+            const growths = allStocks.map(s => s.growth).filter(v => v > 0);
+            const preGoods = allStocks.filter(s => s.forecast_type && (s.forecast_type.includes('预增') || s.forecast_type.includes('扭亏')));
+            document.getElementById('avgRoe').textContent = roes.length ? (roes.reduce((a,b)=>a+b,0)/roes.length).toFixed(1) + '%' : '-';
+            document.getElementById('avgGrowth').textContent = growths.length ? (growths.reduce((a,b)=>a+b,0)/growths.length).toFixed(1) + '%' : '-';
+            document.getElementById('preCount').textContent = preGoods.length;
+        }
+        // HMM图表
+        const STATE_COLORS = {'Bull': '#ff4444', 'Side': '#ffaa00', 'Bear': '#4488ff'};
+        async function showChart(code, name) {
+            document.getElementById('modalTitle').textContent = name + ' (' + code + ') - HMM状态分析';
+            document.getElementById('chartContent').innerHTML = '<div class="loading" style="padding:40px;">正在加载...</div>';
+            document.getElementById('chartModal').style.display = 'block';
+            try {
+                const resp = await fetch(apiPrefix + '/chart/' + code);
+                if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                const data = await resp.json();
+                if (data.error) { document.getElementById('chartContent').innerHTML = '<div class="loading">' + data.error + '</div>'; return; }
+                renderChart(data);
+            } catch(e) {
+                document.getElementById('chartContent').innerHTML = '<div class="loading">图表加载失败: ' + e.message + '</div>';
+            }
+        }
+        function renderChart(data) {
+            const dates = data.dates, prices = data.prices, states = data.states, returns = data.returns;
+            const stateParams = data.state_params || {}, transMatrix = data.trans_matrix || [];
+            let html = '<div class="state-legend">';
+            Object.entries(stateParams).forEach(([k, v]) => {
+                html += '<div class="state-item"><span class="state-dot" style="background:' + STATE_COLORS[k] + '"></span><b>' + k + '</b> 均值' + v.mean + '% 波动' + v.std + '% (' + v.count + '天)</div>';
+            });
+            html += '</div><div class="chart-grid">';
+            html += '<div class="chart-box chart-box-full"><div class="chart-title">📉 60日价格走势 + HMM状态背景</div><div id="chartPrice" class="chart-canvas"></div></div>';
+            html += '<div class="chart-box"><div class="chart-title">📊 日收益率 (%)</div><div id="chartReturn" class="chart-canvas"></div></div>';
+            html += '<div class="chart-box"><div class="chart-title">🧭 状态概率分布</div><div id="chartProb" class="chart-canvas"></div></div>';
+            html += '<div class="chart-box chart-box-full"><div class="chart-title">🔀 状态转移矩阵</div><div id="chartTrans" class="chart-canvas" style="height:260px;"></div></div>';
+            html += '</div>';
+            document.getElementById('chartContent').innerHTML = html;
+            // 价格图 - 连续状态分组为区间
+            var stateAreas = [];
+            if (dates.length > 0) {
+                var segStart = dates[0], segState = states[0];
+                for (var i = 1; i < dates.length; i++) {
+                    if (states[i] !== segState) {
+                        stateAreas.push([{ xAxis: segStart, itemStyle: { color: STATE_COLORS[segState], opacity: 0.15 } }, { xAxis: dates[i-1] }]);
+                        segStart = dates[i]; segState = states[i];
+                    }
+                }
+                stateAreas.push([{ xAxis: segStart, itemStyle: { color: STATE_COLORS[segState], opacity: 0.15 } }, { xAxis: dates[dates.length-1] }]);
+            }
+            const chPrice = echarts.init(document.getElementById('chartPrice'));
+            chPrice.setOption({
+                tooltip: { trigger: 'axis' },
+                grid: { left: 50, right: 20, top: 10, bottom: 25 },
+                xAxis: { type: 'category', data: dates, axisLabel: { fontSize: 10 } },
+                yAxis: { type: 'value', scale: true, axisLabel: { fontSize: 10 } },
+                dataZoom: [{ type: 'inside' }],
+                series: [{ type: 'line', data: prices, smooth: true, showSymbol: false, lineStyle: { width: 2, color: '#1a1a1a' },
+                    areaStyle: { color: 'rgba(102,126,234,0.15)' }, markArea: { silent: true, data: stateAreas } }]
+            });
+            const chRet = echarts.init(document.getElementById('chartReturn'));
+            chRet.setOption({
+                tooltip: { trigger: 'axis' },
+                grid: { left: 50, right: 20, top: 10, bottom: 25 },
+                xAxis: { type: 'category', data: dates, axisLabel: { fontSize: 9 } },
+                yAxis: { type: 'value', axisLabel: { fontSize: 10, formatter: '{value}%' } },
+                series: [{ type: 'bar', data: returns.map((r, i) => ({ value: (r * 100).toFixed(2), itemStyle: { color: STATE_COLORS[states[i]] } })) }]
+            });
+            const chProb = echarts.init(document.getElementById('chartProb'));
+            const probData = Object.entries(stateParams).map(([k, v]) => ({ name: k, value: v.count, itemStyle: { color: STATE_COLORS[k] } }));
+            chProb.setOption({ tooltip: { trigger: 'item' }, series: [{ type: 'pie', radius: ['40%', '70%'], label: { formatter: '{b}: {c}天 ({d}%)' }, data: probData }] });
+            const chTrans = echarts.init(document.getElementById('chartTrans'));
+            const stateNames = Object.keys(stateParams);
+            const transData = [];
+            transMatrix.forEach((row, i) => row.forEach((v, j) => transData.push([j, i, v])));
+            chTrans.setOption({
+                tooltip: { formatter: p => stateNames[p.value[1]] + ' → ' + stateNames[p.value[0]] + ': ' + p.value[2].toFixed(2) },
+                grid: { left: 80, right: 80, top: 20, bottom: 50 },
+                xAxis: { type: 'category', data: stateNames, splitArea: { show: true } },
+                yAxis: { type: 'category', data: stateNames, splitArea: { show: true } },
+                visualMap: { min: 0, max: 1, calculable: true, orient: 'horizontal', left: 'center', bottom: 0, inRange: { color: ['#ffffff', '#667eea'] } },
+                series: [{ type: 'heatmap', data: transData, label: { show: true, formatter: p => p.value[2].toFixed(2) } }]
+            });
+        }
+        function closeModal() { document.getElementById('chartModal').style.display = 'none'; }
+        window.onclick = function(event) { if (event.target === document.getElementById('chartModal')) closeModal(); }
+        window.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+        loadData(false);
+    </script>
+</body>
+</html>
