@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>选股中心</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#f5f5f5;color:#333}
+.container{max-width:1400px;margin:0 auto;padding:16px}
+.header{background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);color:#fff;padding:20px;border-radius:10px;margin-bottom:12px}
+.header h1{font-size:22px;margin-bottom:6px}
+.header p{opacity:.9;font-size:12px}
+.update-time{font-size:11px;margin-top:8px;opacity:.8}
+.refresh-btn{display:inline-block;margin-top:10px;padding:7px 20px;border:none;border-radius:16px;cursor:pointer;font-size:12px;font-weight:bold;background:#fff;color:#667eea;box-shadow:0 2px 6px rgba(0,0,0,.2);transition:all .3s}
+.refresh-btn:hover{transform:translateY(-2px)}
+.refresh-btn:disabled{opacity:.6;cursor:not-allowed;transform:none}
+.stats{display:flex;gap:10px;margin-bottom:12px;flex-wrap:wrap}
+.stat-card{background:#fff;padding:10px 18px;border-radius:8px;box-shadow:0 2px 5px rgba(0,0,0,.08);text-align:center;min-width:90px}
+.stat-value{font-size:20px;font-weight:bold;color:#667eea}
+.stat-label{font-size:11px;color:#666;margin-top:3px}
+.filters{display:flex;gap:10px;margin-bottom:12px;flex-wrap:wrap;background:#fff;padding:12px 15px;border-radius:8px;box-shadow:0 2px 5px rgba(0,0,0,.08);align-items:center}
+.filter-item{display:flex;align-items:center;gap:5px;font-size:12px}
+.filter-item select,.filter-item input{padding:5px 8px;border:1px solid #dde1e6;border-radius:6px;font-size:12px;background:#fff;color:#333;cursor:pointer;outline:none}
+.filter-item input{width:70px}
+.filter-item select:focus,.filter-item input:focus{border-color:#667eea}
+.filter-item label{user-select:none}
+.reset-btn{padding:5px 14px;border:1px solid #667eea;border-radius:6px;background:#fff;color:#667eea;font-size:12px;cursor:pointer}
+.reset-btn:hover{background:#667eea;color:#fff}
+.stock-table{background:#fff;border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,.08);overflow:hidden}
+.table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+table{width:100%;border-collapse:collapse;min-width:900px}
+th{background:#f8f9fa;padding:9px 6px;text-align:center;font-weight:600;font-size:12px;color:#333;cursor:pointer;user-select:none;white-space:nowrap}
+th:hover{background:#eef0f4}
+th .arrow{font-size:9px;color:#667eea}
+td{padding:7px 6px;text-align:center;border-bottom:1px solid #e9ecef;font-size:12px;white-space:nowrap}
+tr:hover{background:#f8f9fa}
+.stock-name{color:#667eea;cursor:pointer;font-weight:500}
+.stock-name:hover{text-decoration:underline}
+.positive{color:#e74c3c;font-weight:bold}
+.negative{color:#27ae60}
+.ind-neg{color:#e74c3c;font-weight:bold}
+.ind-pos{color:#27ae60}
+.dim{color:#bbb}
+.seg{display:flex;gap:4px;flex-wrap:wrap}
+.seg button{padding:4px 10px;border:1px solid #dde1e6;border-radius:6px;background:#fff;font-size:12px;cursor:pointer;color:#333}
+.seg button.on{background:#667eea;border-color:#667eea;color:#fff}
+.pager{display:flex;justify-content:center;align-items:center;gap:10px;padding:12px;font-size:12px}
+.pager button{padding:5px 14px;border:1px solid #dde1e6;border-radius:6px;background:#fff;cursor:pointer;font-size:12px}
+.pager button:disabled{opacity:.4;cursor:not-allowed}
+.pager button.on{background:#667eea;border-color:#667eea;color:#fff}
+.loading{text-align:center;padding:40px;color:#666}
+.cache-info{font-size:11px;color:#999;margin-top:8px;text-align:center}
+@media (max-width:768px){
+.container{padding:8px}
+.header{padding:14px}
+.header h1{font-size:18px}
+.stat-card{flex:1 1 30%}
+}
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <h1>选股中心</h1>
+    <p>沪深主板 · 五维条件筛选 · 数据每30分钟自动刷新</p>
+    <div class="update-time" id="updatetime">加载中…</div>
+    <button class="refresh-btn" id="refreshbtn" onclick="doRefresh()">立即刷新</button>
+  </div>
+  <div class="stats">
+    <div class="stat-card"><div class="stat-value" id="st-total">-</div><div class="stat-label">全市场</div></div>
+    <div class="stat-card"><div class="stat-value" id="st-match">-</div><div class="stat-label">当前命中</div></div>
+    <div class="stat-card"><div class="stat-value" id="st-ind">-</div><div class="stat-label">行业数</div></div>
+    <div class="stat-card"><div class="stat-value" id="st-kdate">-</div><div class="stat-label">K线日期</div></div>
+  </div>
+  <div class="filters">
+    <div class="filter-item">
+      <span>净利同比</span>
+      <input type="number" id="f-np" placeholder="≥" step="0.1" min="0">
+      <button class="reset-btn" style="padding:3px 8px" onclick="this.previousElementSibling.value=''">清</button>
+    </div>
+    <div class="filter-item">
+      <span>指标1≤</span>
+      <input type="number" id="f-ind1" value="-7" style="width:52px">
+      <input type="checkbox" id="f-ind1-on" onchange="applyFilters()">
+    </div>
+    <div class="filter-item">
+      <span>股价</span>
+      <div class="seg" id="f-price">
+        <button data-v="" class="on">全部</button><button data-v="gt2">&gt;2</button><button data-v="r2_10">2-10</button><button data-v="r5_20">5-20</button><button data-v="gt30">30+</button>
+      </div>
+    </div>
+    <div class="filter-item">
+      <span>指标2≤</span>
+      <input type="number" id="f-ind2" value="2" style="width:40px">
+      <input type="checkbox" id="f-ind2-on" onchange="applyFilters()">
+    </div>
+    <div class="filter-item">
+      <label><input type="checkbox" id="f-industry" onchange="applyFilters()"> 行业净额&gt;0 且 行业涨跌&gt;0</label>
+    </div>
+    <button class="reset-btn" onclick="resetFilters()">重置</button>
+  </div>
+  <div class="stock-table">
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr id="thead-row">
+            <th data-k="code">代码</th><th data-k="name">名称</th>
+            <th data-k="price">最新价</th><th data-k="change">涨跌%</th>
+            <th data-k="turnover">换手%</th><th data-k="np_yoy">净利同比%</th>
+            <th data-k="ind1">指标1</th><th data-k="ind2">指标2</th>
+            <th data-k="sector">行业</th><th data-k="ind_change">行业涨跌%</th><th data-k="ind_netin">行业净额(亿)</th>
+          </tr>
+        </thead>
+        <tbody id="tbody"><tr><td colspan="11" class="loading">加载中…</td></tr></tbody>
+      </table>
+    </div>
+    <div class="pager" id="pager"></div>
+  </div>
+  <div class="cache-info" id="cacheinfo"></div>
+</div>
+<script>
+let snap=null, filtered=[], page=1;
+const PAGE=100;
+let sortKey='code', sortAsc=true;
+
+// 行业索引：名称 -> {change, netin}
+let indMap={};
+function buildIndMap(){
+  indMap={};
+  (snap.industries||[]).forEach(x=>{indMap[x.name]=x});
+}
+function indOf(s){
+  if(!s.sector) return null;
+  return indMap[s.sector]||null;
+}
+function fmt(v,d){ return v==null?'-':(Math.round(v*10**d)/10**d).toFixed(d); }
+
+function applyFilters(){
+  if(!snap){return}
+  const npIn=document.getElementById('f-np');
+  const npMin=parseFloat(npIn.value);
+  const npOn=!isNaN(npMin)&&npIn.value!=='';
+  const ind1On=document.getElementById('f-ind1-on').checked;
+  const ind1Max=parseFloat(document.getElementById('f-ind1').value)||-7;
+  const priceV=document.querySelector('#f-price .on').dataset.v;
+  const ind2On=document.getElementById('f-ind2-on').checked;
+  const ind2Max=parseFloat(document.getElementById('f-ind2').value);
+  const indOn=document.getElementById('f-industry').checked;
+
+  function priceOk(p){
+    if(priceV==='gt2')return p>2;
+    if(priceV==='r2_10')return p>=2&&p<=10;
+    if(priceV==='r5_20')return p>=5&&p<=20;
+    if(priceV==='gt30')return p>30;
+    return true;
+  }
+  filtered=snap.stocks.filter(s=>{
+    if(s.price==null||s.price<=0)return false;
+    if(npOn&&!(s.np_yoy!=null&&s.np_yoy>=npMin))return false;
+    if(ind1On&&!(s.ind1!=null&&s.ind1<=ind1Max))return false;
+    if(!priceOk(s.price))return false;
+    if(ind2On&&!(s.ind2!=null&&s.ind2<=ind2Max))return false;
+    if(indOn){
+      const ix=indOf(s);
+      if(!ix||ix.netin==null||ix.change==null)return false;
+      if(!(ix.netin>0&&ix.change>0))return false;
+    }
+    return true;
+  });
+  doSort();
+  page=1;
+  render();
+}
+function doSort(){
+  filtered.sort((a,b)=>{
+    let va=a[sortKey],vb=b[sortKey];
+    if(sortKey==='ind_change'){va=indOf(a);vb=indOf(b);va=va?va.change:null;vb=vb?vb.change:null}
+    if(sortKey==='ind_netin'){va=indOf(a);vb=indOf(b);va=va?va.netin:null;vb=vb?vb.netin:null}
+    if(va==null&&vb==null)return 0;
+    if(va==null)return 1;
+    if(vb==null)return -1;
+    if(typeof va==='string'){return sortAsc?va.localeCompare(vb,'zh'):vb.localeCompare(va,'zh')}
+    return sortAsc?va-vb:vb-va;
+  });
+}
+function render(){
+  const total=filtered.length;
+  document.getElementById('st-match').textContent=total;
+  const tb=document.getElementById('tbody');
+  const start=(page-1)*PAGE;
+  const rows=filtered.slice(start,start+PAGE);
+  tb.innerHTML=rows.length?rows.map(s=>{
+    const ix=indOf(s);
+    const chgCls=s.change!=null?(s.change>0?'positive':(s.change<0?'negative':'dim')):'';
+    const ind1Cls=s.ind1!=null?(s.ind1<=-7?'ind-neg':'ind-pos'):'';
+    return `<tr>
+      <td>${s.code}</td>
+      <td><a class="stock-name" href="https://www.10jqka.com.cn/quote/${s.code}/" target="_blank">${s.name||s.code}</a></td>
+      <td>${fmt(s.price,2)}</td>
+      <td class="${chgCls}">${s.change==null?'-':(s.change>0?'+':'')+fmt(s.change,2)}</td>
+      <td>${fmt(s.turnover,2)}</td>
+      <td>${s.np_yoy==null?'-':fmt(s.np_yoy,1)}</td>
+      <td class="${ind1Cls}">${fmt(s.ind1,2)}</td>
+      <td>${s.ind2==null?'-':s.ind2}</td>
+      <td>${s.sector||'-'}</td>
+      <td>${ix?fmt(ix.change,2):'-'}</td>
+      <td>${ix&&ix.netin!=null?fmt(ix.netin,1):'-'}</td>
+    </tr>`}).join(''):
+    '<tr><td colspan="11" class="loading">无符合条件的股票</td></tr>';
+  // 分页
+  const pages=Math.max(1,Math.ceil(total/PAGE));
+  if(page>pages)page=pages;
+  let ph='';
+  for(let p=1;p<=pages;p++){
+    if(pages>7&&Math.abs(p-page)>3&&p!==1&&p!==pages){if(ph.slice(-1)!=='…')ph+='<span>…</span>';continue}
+    ph+=`<button class="${p===page?'on':''}" onclick="gotoPage(${p})">${p}</button>`;
+  }
+  document.getElementById('pager').innerHTML=
+    `<button ${page<=1?'disabled':''} onclick="gotoPage(${page-1})">上一页</button>${ph}<button ${page>=pages?'disabled':''} onclick="gotoPage(${page+1})">下一页</button><span>共 ${total} 只</span>`;
+}
+function gotoPage(p){page=p;render();window.scrollTo(0,0)}
+function resetFilters(){
+  document.getElementById('f-np').value='';
+  document.getElementById('f-ind1-on').checked=false;
+  document.getElementById('f-ind2-on').checked=false;
+  document.getElementById('f-industry').checked=false;
+  document.querySelectorAll('#f-price button').forEach(b=>b.classList.toggle('on',b.dataset.v===''));
+  applyFilters();
+}
+document.querySelectorAll('#f-price button').forEach(b=>b.addEventListener('click',()=>{
+  document.querySelectorAll('#f-price button').forEach(x=>x.classList.remove('on'));
+  b.classList.add('on');applyFilters();
+}));
+document.querySelectorAll('#thead-row th').forEach(th=>th.addEventListener('click',()=>{
+  const k=th.dataset.k;
+  if(sortKey===k)sortAsc=!sortAsc;else{sortKey=k;sortAsc=true}
+  document.querySelectorAll('#thead-row th .arrow').forEach(a=>a.remove());
+  th.innerHTML=th.textContent+' <span class="arrow">'+(sortAsc?'▲':'▼')+'</span>';
+  doSort();page=1;render();
+}));
+['f-np','f-ind1','f-ind2'].forEach(id=>{
+  document.getElementById(id).addEventListener('change',applyFilters);
+});
+
+async function loadSnapshot(){
+  try{
+    const r=await fetch('/api/snapshot');
+    if(!r.ok)throw 0;
+    snap=await r.json();
+    buildIndMap();
+    document.getElementById('st-total').textContent=snap.total;
+    document.getElementById('st-ind').textContent=(snap.industries||[]).length;
+    document.getElementById('st-kdate').textContent=snap.kline_date||'-';
+    document.getElementById('updatetime').textContent='数据更新：'+snap.generated_at+' · 耗时'+snap.elapsed_sec+'s';
+    document.getElementById('cacheinfo').textContent='数据源：东方财富(行情/财务/行业) + 腾讯(日K线) · 默认无筛选=全部数据 · 指标1=MA(合一,10) · 指标2=SUM(X>0,7)';
+    applyFilters();
+  }catch(e){
+    document.getElementById('tbody').innerHTML='<tr><td colspan="11" class="loading">数据加载中或暂无（首轮扫描未完成），30秒后自动重试</td></tr>';
+    setTimeout(loadSnapshot,30000);
+  }
+}
+async function doRefresh(){
+  const btn=document.getElementById('refreshbtn');
+  btn.disabled=true;btn.textContent='刷新中…';
+  try{await fetch('/api/refresh',{method:'POST'})}catch(e){}
+  const t=setInterval(async()=>{
+    try{
+      const r=await fetch('/api/status');const st=await r.json();
+      if(!st.scanning){
+        clearInterval(t);
+        loadSnapshot();
+        btn.disabled=false;btn.textContent='立即刷新';
+      }
+    }catch(e){}
+  },3000);
+}
+loadSnapshot();
+</script>
+</body>
+</html>
