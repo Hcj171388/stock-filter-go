@@ -1,11 +1,12 @@
 # Stock Filter V9 (Go)
 
-实时优质股筛选系统 V9 的 Go 语言实现。原项目为 Python/Flask（`app_v9.py` / `app_v9_multi.py`），本仓库用 Go 1.22 + 纯标准库完整复刻，包含两个服务：
+实时优质股筛选系统 V9 的 Go 语言实现。原项目为 Python/Flask（`app_v9.py` / `app_v9_multi.py`），本仓库用 Go 1.22 + 纯标准库完整复刻，并在此基础上扩展，共包含三个服务：
 
 | 服务 | 端口 | 复刻自 | 功能 |
 |---|---|---|---|
 | `stock-scanner` | 5800 | `app_v9.py` (5000) | 实时优质股筛选：板块→成分股→财务/预告→垃圾过滤→HMM位置 |
 | `stock-portfolio` | 18088 | `app_v9_multi.py` (5001) | 多条件筛选：全市场沪深主板扫描→HMM动态刻度筛选，30分钟自动刷新 |
+| `stock-select` | 18090 | 独立扩展 | 沪深主板五维选股：行业净额/涨跌 + K线指标 + 业绩 + 资金多维，后端取数算指标、前端全量过滤，30分钟刷新（x.hcj.org.cn） |
 
 ## 目录结构
 
@@ -13,19 +14,22 @@
 stock-filter-go/
 ├── stocklib/          # 共享库：东财/腾讯/新浪数据源、HMM 计算、缓存
 ├── stock-scanner/     # 5800 端口服务（实时优质股筛选 V9）
-└── stock-portfolio/   # 18088 端口服务（多条件筛选 V9）
+├── stock-portfolio/   # 18088 端口服务（多条件筛选 V9）
+└── stock-select/      # 18090 端口服务（沪深主板五维选股，x.hcj.org.cn）
 ```
 
 ## 构建与运行
 
 ```bash
-# 构建两个服务
+# 构建三个服务
 cd stock-scanner && go build -o stock-scanner .
 cd ../stock-portfolio && go build -o stock-portfolio .
+cd ../stock-select && go build -o stock-select .
 
 # 分别启动（各自目录下运行，页面/缓存为相对路径）
 cd stock-scanner && ./stock-scanner        # 监听 5800
 cd ../stock-portfolio && ./stock-portfolio # 监听 18088
+cd ../stock-select && ./stock-select       # 监听 18090
 ```
 
 启动参数（端口）在各自 `main.go` 顶部的 `PORT` 常量，如需修改直接改端口后重新编译。
@@ -44,11 +48,20 @@ cd ../stock-portfolio && ./stock-portfolio # 监听 18088
 - 图表接口代理转发到 5800 复用其 HMM 计算
 - 接口：`/stock/api/multi`（支持 `?fresh=1` 强制重扫）、`/stock/api/chart/<code>`
 
+### stock-select (18090)
+- 沪深主板五维选股：行业净额/涨跌 + K线指标(Ind1/Ind2) + 业绩(净利同比/公告日) + 资金多维
+- 后端只取数算指标（零筛选），所有筛选逻辑在前端单文件 `page.html` 完成
+- 数据源：东财 `push2delay` clist（行情 + 行业 `f62` 主力净流入）+ 腾讯 `proxy.finance.qq.com` 单只K线（磁盘缓存 25min TTL）+ 本地 `data/yjgg.jsonl`（10jqka 业绩缓存）
+- 后台每 30 分钟自动扫描 + `POST /api/refresh` 手动触发；接口 `/api/snapshot`、`/api/refresh`、`/api/status`
+- 页面：个股 12 列表格，净利同比 / 行业涨跌 / 行业净额 三列红涨绿跌色标 + 前端全量过滤
+
 ## 数据源说明
 
 - 东财 K 线域名（`push2his.eastmoney.com`）在某些网络不可达，故 K 线统一走**腾讯** `web.ifzq.gtimg.cn`（qfq 前复权）
 - 东财列表/行情 `push2delay.eastmoney.com` 与财务 `datacenter-web.eastmoney.com` 正常
 - 静态资源 ECharts 随仓库分发（`stock-scanner/static/` 与 `stock-portfolio/static/`），离线可用
+- 行业主力净流入取东财 clist `f62`（元，有正负，/1e8 转亿元）；`f106` 在板块场景无负值、已废弃
+- 业绩数据走本地缓存 `data/yjgg.jsonl`（10jqka 业绩数据库，每日增量更新）
 
 ## 协议
 
