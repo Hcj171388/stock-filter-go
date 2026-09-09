@@ -195,19 +195,20 @@ function render(){
     const ind1Cls=s.ind1!=null?(s.ind1<=-7?'ind-neg':'ind-pos'):'';
     const indCls=ix&&ix.change!=null?(ix.change>0?'positive':(ix.change<0?'negative':'dim')):'';
     const indNetCls=ix&&ix.netin!=null?(ix.netin>0?'positive':(ix.netin<0?'negative':'dim')):'';
+    const npCls=s.np_yoy!=null?(s.np_yoy>0?'positive':(s.np_yoy<0?'negative':'dim')):'';
     return `<tr>
       <td>${s.code}</td>
       <td><a class="stock-name" href="https://www.10jqka.com.cn/quote/${s.code}/" target="_blank">${s.name||s.code}</a></td>
       <td>${fmt(s.price,2)}</td>
       <td class="${chgCls}">${s.change==null?'-':(s.change>0?'+':'')+fmt(s.change,2)}</td>
       <td>${fmt(s.turnover,2)}</td>
-      <td>${s.np_yoy==null?'-':fmt(s.np_yoy,1)}</td>
+      <td class="${npCls}">${s.np_yoy==null?'-':fmt(s.np_yoy,1)}</td>
       <td>${s.pub_date||'-'}</td>
       <td class="${ind1Cls}">${fmt(s.ind1,2)}</td>
       <td>${s.ind2==null?'-':s.ind2}</td>
       <td>${s.sector||'-'}</td>
-      <td>${ix?fmt(ix.change,2):'-'}</td>
-      <td>${ix&&ix.netin!=null?fmt(ix.netin,1):'-'}</td>
+      <td class="${indCls}">${ix?fmt(ix.change,2):'-'}</td>
+      <td class="${indNetCls}">${ix&&ix.netin!=null?fmt(ix.netin,1):'-'}</td>
     </tr>`}).join(''):
     '<tr><td colspan="12" class="loading">无符合条件的股票</td></tr>';
   // 分页
