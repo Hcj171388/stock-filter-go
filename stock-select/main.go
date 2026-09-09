@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -43,6 +44,7 @@ type SelectStock struct {
 	Turnover *float64 `json:"turnover"`
 	Sector   *string  `json:"sector"`
 	NPYoy    *float64 `json:"np_yoy"`
+	PubDate  *string  `json:"pub_date"`
 	Ind1     *float64 `json:"ind1"`
 	Ind2     *float64 `json:"ind2"`
 }
@@ -175,7 +177,42 @@ type klineResp struct {
 	} `json:"data"`
 }
 
-func getKlineSingle(sym string) ([][]interface{}, error) {
+// KBar 精简K线（缓存/指标只用 date/open/close/换手率，避免 []interface{} 内存膨胀）
+type KBar struct {
+	Date string  `json:"d"`
+	Open float64 `json:"o"`
+	Clse float64 `json:"c"`
+	Turn float64 `json:"t"`
+}
+
+func kNum(v interface{}) float64 {
+	switch x := v.(type) {
+	case string:
+		f, _ := strconv.ParseFloat(x, 64)
+		return f
+	case float64:
+		return x
+	default:
+		return 0
+	}
+}
+
+// parseKRow 腾讯K线一行 [date, open, close, high, low, vol, {}, 换手率%, 成交额万, ...]
+func parseKRow(item []interface{}) KBar {
+	if len(item) < 6 {
+		return KBar{}
+	}
+	b := KBar{}
+	b.Date, _ = item[0].(string)
+	b.Open = kNum(item[1])
+	b.Clse = kNum(item[2])
+	if len(item) > 7 {
+		b.Turn = kNum(item[7])
+	}
+	return b
+}
+
+func getKlineSingle(sym string) ([]KBar, error) {
 	u := klineURL + "?param=" + url.QueryEscape(fmt.Sprintf("%s,day,,,%d,qfq", sym, KLINE_DAYS))
 	req, err := http.NewRequest("GET", u, nil)
 	if err != nil {
@@ -199,20 +236,24 @@ func getKlineSingle(sym string) ([][]interface{}, error) {
 		return nil, fmt.Errorf("kline err code=%d msg=%s", r.Code, r.Msg)
 	}
 	node := r.Data[sym]
-	arr := node.QFQDay
-	if len(arr) == 0 {
-		arr = node.Day
+	raw := node.QFQDay
+	if len(raw) == 0 {
+		raw = node.Day
 	}
-	if len(arr) == 0 {
+	if len(raw) == 0 {
 		return nil, fmt.Errorf("kline empty for %s", sym)
 	}
-	return arr, nil
+	bars := make([]KBar, 0, len(raw))
+	for _, it := range raw {
+		bars = append(bars, parseKRow(it))
+	}
+	return bars, nil
 }
 
 type klineEntry struct {
-	Date string          `json:"date"`
-	Ts   int64           `json:"ts"`
-	Arr  [][]interface{} `json:"arr"`
+	Date string  `json:"date"`
+	Ts   int64   `json:"ts"`
+	Bars []KBar  `json:"bars"`
 }
 
 const klineCacheFile = "cache/kline_day.json"
@@ -226,14 +267,16 @@ func loadKlineCache() map[string]klineEntry {
 }
 
 func saveKlineCache(c map[string]klineEntry) {
-	_ = stocklib.CacheWriteJSON(klineCacheFile, c)
+	if err := stocklib.CacheWriteJSON(klineCacheFile, c); err != nil {
+		log.Printf("[kline] 缓存保存失败: %v", err)
+	}
 }
 
 // fetchKlineAll 单只拉取 + 磁盘缓存：
 // - 缓存内 date==最新K线日 且 25分钟内拉取过的直接复用
 // - 其余并发拉取（12 worker，错峰50ms），失败重试一次
 // - 失败预算：连续失败300个即放弃本轮拉取（防风控雪崩），保留缓存旧值
-func fetchKlineAll(symbols []string) map[string][][]interface{} {
+func fetchKlineAll(symbols []string) map[string][]KBar {
 	const freshSec = 25 * 60
 	now := time.Now()
 	known := loadKlineCache()
@@ -254,10 +297,10 @@ func fetchKlineAll(symbols []string) map[string][][]interface{} {
 	}
 	log.Printf("[kline] 缓存命中 %d / %d, 需拉取 %d (基准日=%s)", len(symbols)-len(need), len(symbols), len(need), latestDay)
 
-	result := map[string][][]interface{}{}
+	result := map[string][]KBar{}
 	if len(need) == 0 {
 		for sym, e := range known {
-			result[sym] = e.Arr
+			result[sym] = e.Bars
 		}
 		return result
 	}
@@ -296,8 +339,8 @@ func fetchKlineAll(symbols []string) map[string][][]interface{} {
 				return
 			}
 			consecFail = 0
-			lastDate, _, _, _, _ := parseKDay(arr[len(arr)-1])
-			known[s] = klineEntry{Date: lastDate, Ts: now.Add(time.Minute).Unix(), Arr: arr}
+			lastDate := arr[len(arr)-1].Date
+			known[s] = klineEntry{Date: lastDate, Ts: now.Add(time.Minute).Unix(), Bars: arr}
 			result[s] = arr
 			mu.Unlock()
 			time.Sleep(50 * time.Millisecond)
@@ -307,7 +350,7 @@ func fetchKlineAll(symbols []string) map[string][][]interface{} {
 
 	for sym, e := range known {
 		if _, ok := result[sym]; !ok {
-			result[sym] = e.Arr
+			result[sym] = e.Bars
 		}
 	}
 	if !aborted {
@@ -318,28 +361,6 @@ func fetchKlineAll(symbols []string) map[string][][]interface{} {
 }
 
 // ============ 4. 指标计算（复刻TDX公式）============
-
-// parseKDay 取一行K线 [date, open, close, high, low, vol(手), {}, 换手率%, 成交额(万), ...]
-func parseKDay(item []interface{}) (date string, open, close, turnover float64, ok bool) {
-	if len(item) < 6 {
-		return "", 0, 0, 0, false
-	}
-	d, _ := item[0].(string)
-	o, errO := strconv.ParseFloat(fmt.Sprintf("%v", item[1]), 64)
-	c, errC := strconv.ParseFloat(fmt.Sprintf("%v", item[2]), 64)
-	if errO != nil || errC != nil || c <= 0 {
-		return "", 0, 0, 0, false
-	}
-	var to float64
-	if len(item) > 7 {
-		if s, is := item[7].(string); is {
-			if v, err := strconv.ParseFloat(s, 64); err == nil {
-				to = v
-			}
-		}
-	}
-	return d, o, c, to, true
-}
 
 func ma(values []float64, n int) (float64, bool) {
 	if len(values) < n {
@@ -354,8 +375,8 @@ func ma(values []float64, n int) (float64, bool) {
 
 // calcInd1 指标1：涨=(C-REFC)/REFC, 换手=VOL/CAPITAL, 比率=MA(涨/换手,5),
 // 方向=IF(C>O,IF(比率>0,1,-1),-1), 趋势=SUM(方向,10), 合一=趋势*0.5+MA(趋势,5)*0.5, 均线=MA(合一,10)
-func calcInd1(arr [][]interface{}) *float64 {
-	n := len(arr)
+func calcInd1(b []KBar) *float64 {
+	n := len(b)
 	if n < 24 {
 		return nil
 	}
@@ -363,18 +384,18 @@ func calcInd1(arr [][]interface{}) *float64 {
 	direction := make([]float64, 0, n)
 	prevClose := 0.0
 	for i := 0; i < n; i++ {
-		_, open, close, to, _ := parseKDay(arr[i])
+		o, c, to := b[i].Open, b[i].Clse, b[i].Turn
 		if to <= 0 {
 			return nil // 无换手率字段的来源不可靠
 		}
 		var r float64
 		if prevClose > 0 {
-			r = ((close - prevClose) / prevClose) / (to / 100)
+			r = ((c - prevClose) / prevClose) / (to / 100)
 		}
 		ratio = append(ratio, r)
 		if len(ratio) >= 5 {
 			maRatio, _ := ma(ratio, 5)
-			if close > open && maRatio > 0 {
+			if c > o && maRatio > 0 {
 				direction = append(direction, 1)
 			} else {
 				direction = append(direction, -1)
@@ -382,7 +403,7 @@ func calcInd1(arr [][]interface{}) *float64 {
 		} else {
 			direction = append(direction, -1) // 数据不足期冷启动
 		}
-		prevClose = close
+		prevClose = c
 	}
 	// 趋势=SUM(方向,10) 逐bar
 	trendSeries := make([]float64, 0, n)
@@ -412,28 +433,130 @@ func calcInd1(arr [][]interface{}) *float64 {
 }
 
 // calcInd2 指标2：ZD=(C/REFC-1)*100, X=ZD/(VOL/CAPITAL), 统=SUM(X>0,7)
-func calcInd2(arr [][]interface{}) *float64 {
-	n := len(arr)
+func calcInd2(b []KBar) *float64 {
+	n := len(b)
 	if n < 8 {
 		return nil
 	}
 	cnt := 0.0
 	for i := n - 7; i < n; i++ {
-		_, _, prevClose, _, _ := parseKDay(arr[i-1])
-		_, _, close, to, _ := parseKDay(arr[i])
+		prevClose := b[i-1].Clse
+		c := b[i].Clse
+		to := b[i].Turn
 		if to <= 0 || prevClose <= 0 {
 			continue
 		}
-		if (close/prevClose-1)*100/(to/100) > 0 {
+		if (c/prevClose-1)*100/(to/100) > 0 {
 			cnt++
 		}
 	}
 	return &cnt
 }
-// ============ 5. 净利润同比（东财 datacenter RPT_LICO_FN_CPD）============
+// ============ 5. 净利润同比+公告日（10jqka业绩数据库 本地合并缓存）============
+// 缓存: /root/cow/data/yjgg.jsonl（scripts/fetch_yjgg_bootstrap.py 建仓, fetch_yjgg_daily.py 每日12:00增量）
+// 口径: 逐股取最新报告期; 同期内 notice>express>preview, 同种取 declare_date 最新; yoy 空值用上下限中值补
 
-func fetchFinGrowth(codes []string) map[string]*float64 {
-	result := map[string]*float64{}
+const finDataFile = "/root/cow/data/yjgg.jsonl"
+
+var finCache struct {
+	sync.Mutex
+	mtime int64
+	data  map[string]finInfo
+}
+
+func finTypeRank(t string) int {
+	switch t {
+	case "notice":
+		return 0
+	case "express":
+		return 1
+	default:
+		return 2
+	}
+}
+
+// loadFinLocal 读业绩数据库合并缓存（mtime 变化时自动重载, 30分钟周期内生效新数据）
+func loadFinLocal() map[string]finInfo {
+	st, err := os.Stat(finDataFile)
+	if err != nil {
+		log.Printf("[fin] 业绩缓存不可读: %v", err)
+		return map[string]finInfo{}
+	}
+	finCache.Lock()
+	defer finCache.Unlock()
+	if st.ModTime().Unix() == finCache.mtime && len(finCache.data) > 0 {
+		return finCache.data
+	}
+	type finRow struct {
+		StockCode string   `json:"stock_code"`
+		Report    string   `json:"report"`
+		Forecast  string   `json:"forecast_type"`
+		Declare   string   `json:"declare_date"`
+		Yoy       *float64 `json:"parent_holder_net_profit_yoy"`
+		LowYoy    *float64 `json:"parent_holder_net_profit_low_bound_yoy"`
+		HighYoy   *float64 `json:"parent_holder_net_profit_high_bound_yoy"`
+	}
+	best := map[string]finRow{}
+	f, err := os.Open(finDataFile)
+	lines := 0
+	if err == nil {
+		sc := bufio.NewScanner(f)
+		sc.Buffer(make([]byte, 1024*1024), 8*1024*1024)
+		for sc.Scan() {
+			var r finRow
+			if json.Unmarshal(sc.Bytes(), &r) != nil || r.StockCode == "" {
+				continue
+			}
+			lines++
+			old, ok := best[r.StockCode]
+			if !ok {
+				best[r.StockCode] = r
+				continue
+			}
+			// 新期必胜; 同期比类型优先级; 再比 declare_date
+			if r.Report > old.Report ||
+				(r.Report == old.Report &&
+					(finTypeRank(r.Forecast) < finTypeRank(old.Forecast) ||
+					(finTypeRank(r.Forecast) == finTypeRank(old.Forecast) && r.Declare > old.Declare))) {
+				best[r.StockCode] = r
+			}
+		}
+		f.Close()
+	}
+	out := make(map[string]finInfo, len(best))
+	maxR := ""
+	for code, r := range best {
+		if r.Report > maxR {
+			maxR = r.Report
+		}
+		fi2 := finInfo{}
+		if r.Yoy != nil {
+			v := *r.Yoy
+			fi2.SJLTZ = &v
+		} else if r.LowYoy != nil && r.HighYoy != nil {
+			v := (*r.LowYoy + *r.HighYoy) / 2
+			fi2.SJLTZ = &v
+		}
+		if len(r.Declare) >= 10 {
+			d := r.Declare[:10]
+			fi2.Notice = &d
+		}
+		out[code] = fi2
+	}
+	finCache.mtime = st.ModTime().Unix()
+	finCache.data = out
+	log.Printf("[fin] 业绩缓存载入: %d行, 有效股票%d, 最新期=%s", lines, len(out), maxR)
+	return out
+}
+
+type finInfo struct {
+	SJLTZ  *float64
+	Notice *string
+}
+
+// fetchFinGrowth 东财 RPT_LICO_FN_CPD 路径（已停用, 保留供回滚参考）
+func fetchFinGrowth(codes []string) map[string]finInfo {
+	result := map[string]finInfo{}
 	for i := 0; i < len(codes); i += FIN_BATCH_SIZE {
 		end := i + FIN_BATCH_SIZE
 		if end > len(codes) {
@@ -448,7 +571,7 @@ func fetchFinGrowth(codes []string) map[string]*float64 {
 			"sortColumns": "REPORTDATE", "sortTypes": -1,
 			"pageSize": 500, "pageNumber": 1,
 			"reportName": "RPT_LICO_FN_CPD",
-			"columns":    "SECURITY_CODE,REPORTDATE,SJLTZ",
+			"columns":    "SECURITY_CODE,REPORTDATE,SJLTZ,NOTICE_DATE",
 			"filter":     "(SECURITY_CODE in " + codeFilter + ")",
 		})
 		if err != nil {
@@ -462,7 +585,12 @@ func fetchFinGrowth(codes []string) map[string]*float64 {
 					continue
 				}
 				if _, exists := result[code]; !exists {
-					result[code] = toFloatPtr(item["SJLTZ"])
+					fi := finInfo{SJLTZ: toFloatPtr(item["SJLTZ"])}
+					if nd, ok := item["NOTICE_DATE"].(string); ok && len(nd) >= 10 {
+						d := nd[:10]
+						fi.Notice = &d
+					}
+					result[code] = fi
 				}
 			}
 		}
@@ -487,14 +615,12 @@ func scanOnce() *Snapshot {
 		snapMu.RUnlock()
 		return s
 	}
-	codes := make([]string, 0, len(boardRows))
 	symbols := make([]string, 0, len(boardRows))
 	for _, it := range boardRows {
 		code := cleanCode(it["f12"])
 		if code == "" {
 			continue
 		}
-		codes = append(codes, code)
 		symbols = append(symbols, MarketSymbol(code))
 	}
 
@@ -508,7 +634,7 @@ func scanOnce() *Snapshot {
 	}()
 	klineMap := fetchKlineAll(symbols)
 	wg.Wait()
-	npMap := fetchFinGrowth(codes)
+	npMap := loadFinLocal()
 
 	// 组装
 	stocks := make([]SelectStock, 0, len(boardRows))
@@ -519,21 +645,20 @@ func scanOnce() *Snapshot {
 		if price == nil || *price <= 0 {
 			continue // 停牌/无效
 		}
-		np, _ := npMap[code]
+		fi, _ := npMap[code]
 		var ind1, ind2 *float64
 		if arr, okK := klineMap[MarketSymbol(code)]; okK {
 			ind1 = calcInd1(arr)
 			ind2 = calcInd2(arr)
-			if len(arr) > 0 {
-				if d, _, _, _, ok2 := parseKDay(arr[len(arr)-1]); ok2 && d > klineDate {
-					klineDate = d
-				}
+			if len(arr) > 0 && arr[len(arr)-1].Date > klineDate {
+				klineDate = arr[len(arr)-1].Date
 			}
 		}
 		stocks = append(stocks, SelectStock{
 			Code: code, Name: itName(it), Price: price,
 			Change: toFloatPtr(it["f3"]), Turnover: toFloatPtr(it["f8"]),
-			Sector: toStrPtr(it["f100"]), NPYoy: np, Ind1: ind1, Ind2: ind2,
+			Sector: toStrPtr(it["f100"]), NPYoy: fi.SJLTZ, PubDate: fi.Notice,
+			Ind1: ind1, Ind2: ind2,
 		})
 	}
 
