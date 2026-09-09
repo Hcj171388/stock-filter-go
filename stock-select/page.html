@@ -193,6 +193,8 @@ function render(){
     const ix=indOf(s);
     const chgCls=s.change!=null?(s.change>0?'positive':(s.change<0?'negative':'dim')):'';
     const ind1Cls=s.ind1!=null?(s.ind1<=-7?'ind-neg':'ind-pos'):'';
+    const indCls=ix&&ix.change!=null?(ix.change>0?'positive':(ix.change<0?'negative':'dim')):'';
+    const indNetCls=ix&&ix.netin!=null?(ix.netin>0?'positive':(ix.netin<0?'negative':'dim')):'';
     return `<tr>
       <td>${s.code}</td>
       <td><a class="stock-name" href="https://www.10jqka.com.cn/quote/${s.code}/" target="_blank">${s.name||s.code}</a></td>

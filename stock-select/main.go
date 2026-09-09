@@ -143,7 +143,7 @@ func fetchIndustries() []IndustryInfo {
 	for pn := 1; pn <= 10; pn++ {
 		data, err := stocklib.FetchEM(map[string]string{
 			"pn": strconv.Itoa(pn), "pz": "100", "fid": "f104",
-			"fs": INDUSTRY_FS, "fields": "f12,f14,f3,f104,f105,f106",
+			"fs": INDUSTRY_FS, "fields": "f12,f14,f3,f104,f62",
 		})
 		if err != nil {
 			log.Printf("[ind] 行业板块第%d页失败: %v", pn, err)
@@ -156,7 +156,11 @@ func fetchIndustries() []IndustryInfo {
 				continue
 			}
 			inf.Change = toFloatPtr(it["f3"])
-			inf.NetIn = toFloatPtr(it["f106"])
+			// f62=主力净流入（元，有正有负），换算为亿元展示；原 f106 在板块场景无负值已废弃
+			if raw := toFloatPtr(it["f62"]); raw != nil {
+				yi := round2(*raw / 1e8)
+				inf.NetIn = &yi
+			}
 			out = append(out, inf)
 		}
 		if len(data.Data.Diff) == 0 || len(out) >= data.Data.Total {
