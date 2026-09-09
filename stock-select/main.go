@@ -32,6 +32,7 @@ const (
 	KLINE_DAYS     = 300
 	KLINE_WORKERS  = 8
 	FIN_BATCH_SIZE = 450
+	HITTRACK_FILE  = "/root/cow/data/hittrack.json"
 )
 
 const klineURL = "http://proxy.finance.qq.com/ifzqgtimg/appstock/app/newfqkline/get"
@@ -55,13 +56,27 @@ type IndustryInfo struct {
 	NetIn  *float64 `json:"netin"`
 }
 
+type HCPoint struct {
+	Date  string  `json:"d"`
+	Close float64 `json:"c"`
+}
+
+type HitEntry struct {
+	Name    string    `json:"name"`
+	Sector  string    `json:"sector"`
+	HitDate string    `json:"hit_date"`
+	Base    float64   `json:"base"`
+	Close   []HCPoint `json:"close"`
+}
+
 type Snapshot struct {
-	GeneratedAt string         `json:"generated_at"`
-	ElapsedSec  float64        `json:"elapsed_sec"`
-	Total       int            `json:"total"`
-	KlineDate   string         `json:"kline_date"`
-	Industries  []IndustryInfo `json:"industries"`
-	Stocks      []SelectStock  `json:"stocks"`
+	GeneratedAt string           `json:"generated_at"`
+	ElapsedSec  float64          `json:"elapsed_sec"`
+	Total       int              `json:"total"`
+	KlineDate   string           `json:"kline_date"`
+	Industries  []IndustryInfo   `json:"industries"`
+	Stocks      []SelectStock    `json:"stocks"`
+	HitTrack    map[string]*HitEntry `json:"hit_track"`
 }
 
 var (
@@ -607,6 +622,80 @@ func fetchFinGrowth(codes []string) map[string]finInfo {
 
 // ============ 6. 扫描编排 ============
 
+// ============ 命中跟踪（5/10日历史，共享表 hittrack.json）============
+func loadHitTrack() map[string]*HitEntry {
+	var m map[string]*HitEntry
+	data, err := os.ReadFile(HITTRACK_FILE)
+	if err == nil {
+		_ = json.Unmarshal(data, &m)
+	}
+	if m == nil {
+		m = map[string]*HitEntry{}
+	}
+	return m
+}
+
+func saveHitTrack(m map[string]*HitEntry) {
+	data, _ := json.MarshalIndent(m, "", "  ")
+	_ = os.MkdirAll(filepath.Dir(HITTRACK_FILE), 0755)
+	_ = os.WriteFile(HITTRACK_FILE, data, 0644)
+}
+
+// isHitCond 命中3条件：净利同比>0 且 指标1<=-7 且 行业净额>0且行业涨跌>0
+func isHitCond(s SelectStock, indByName map[string]*IndustryInfo) bool {
+	if s.NPYoy == nil || *s.NPYoy <= 0 {
+		return false
+	}
+	if s.Ind1 == nil || *s.Ind1 > -7 {
+		return false
+	}
+	sec := ""
+	if s.Sector != nil {
+		sec = *s.Sector
+	}
+	in := indByName[sec]
+	return in != nil && in.NetIn != nil && *in.NetIn > 0 && in.Change != nil && *in.Change > 0
+}
+
+// updateHitTrack 更新命中跟踪表：命中→无条目或基准日非今天则替换；
+// 未命中→已跟踪且未满11天则补录今日收盘
+func updateHitTrack(stocks []SelectStock, industries []IndustryInfo, klineMap map[string][]KBar) map[string]*HitEntry {
+	indByName := map[string]*IndustryInfo{}
+	for i := range industries {
+		indByName[industries[i].Name] = &industries[i]
+	}
+	today := time.Now().Format("2006-01-02")
+	track := loadHitTrack()
+	for _, s := range stocks {
+		sec := ""
+		if s.Sector != nil {
+			sec = *s.Sector
+		}
+		hit := isHitCond(s, indByName)
+		arr, okK := klineMap[MarketSymbol(s.Code)]
+		last := 0.0
+		if okK && len(arr) > 0 {
+			last = arr[len(arr)-1].Clse
+		}
+		if hit {
+			e := track[s.Code]
+			if e == nil || e.HitDate != today {
+				track[s.Code] = &HitEntry{
+					Name: s.Name, Sector: sec, HitDate: today,
+					Base: round2(last), Close: []HCPoint{{Date: today, Close: round2(last)}},
+				}
+			}
+		} else {
+			e := track[s.Code]
+			if e != nil && len(e.Close) < 11 && last > 0 && today > e.HitDate && e.Close[len(e.Close)-1].Date != today {
+				e.Close = append(e.Close, HCPoint{Date: today, Close: round2(last)})
+			}
+		}
+	}
+	saveHitTrack(track)
+	return track
+}
+
 func scanOnce() *Snapshot {
 	start := time.Now()
 	log.Printf("[scan] 开始一轮扫描")
@@ -666,6 +755,8 @@ func scanOnce() *Snapshot {
 		})
 	}
 
+	hitTrack := updateHitTrack(stocks, industries, klineMap)
+
 	snap := &Snapshot{
 		GeneratedAt: time.Now().Format("2006-01-02 15:04:05"),
 		ElapsedSec:   round2(time.Since(start).Seconds()),
@@ -673,6 +764,7 @@ func scanOnce() *Snapshot {
 		KlineDate:    klineDate,
 		Industries:   industries,
 		Stocks:       stocks,
+		HitTrack:     hitTrack,
 	}
 	if err := stocklib.CacheWriteJSON(cachePath(), snap); err != nil {
 		log.Printf("[scan] 缓存写入失败: %v", err)

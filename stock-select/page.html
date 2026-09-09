@@ -198,7 +198,7 @@ function render(){
     const npCls=s.np_yoy!=null?(s.np_yoy>0?'positive':(s.np_yoy<0?'negative':'dim')):'';
     return `<tr>
       <td>${s.code}</td>
-      <td><a class="stock-name" href="https://www.10jqka.com.cn/quote/${s.code}/" target="_blank">${s.name||s.code}</a></td>
+      <td><span class="stock-name" onclick="showDetail('${s.code}')">${s.name||s.code}</span></td>
       <td>${fmt(s.price,2)}</td>
       <td class="${chgCls}">${s.change==null?'-':(s.change>0?'+':'')+fmt(s.change,2)}</td>
       <td>${fmt(s.turnover,2)}</td>
@@ -279,6 +279,52 @@ async function doRefresh(){
   },3000);
 }
 loadSnapshot();
+</script>
+<div id="hitmodal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:999;align-items:center;justify-content:center">
+  <div style="background:#fff;border-radius:10px;padding:16px 20px;min-width:280px;box-shadow:0 6px 24px rgba(0,0,0,.35)">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <b style="font-size:15px;color:#667eea">命中跟踪 · 5日/10日累计</b>
+      <span onclick="closeModal()" style="cursor:pointer;font-size:22px;line-height:1;color:#bbb">×</span>
+    </div>
+    <div id="modal-body" style="font-size:14px;line-height:2;color:#333"></div>
+  </div>
+</div>
+<script>
+function hitCond(s){
+  if(s.np_yoy==null||s.np_yoy<=0)return false;
+  if(s.ind1==null||s.ind1>-7)return false;
+  const ix=indOf(s);
+  return !!(ix&&ix.netin!=null&&ix.netin>0&&ix.change!=null&&ix.change>0);
+}
+function fmtPct(v){return v==null?'-':(v>0?'+':'')+v.toFixed(2)+'%';}
+function pCls(v){return v==null?'dim':(v>0?'positive':(v<0?'negative':'dim'));}
+function showDetail(code){
+  const s=(snap.stocks||[]).find(x=>x.code===code);
+  if(!s)return;
+  const e=(snap.hit_track||{})[code];
+  const box=document.getElementById('modal-body');
+  const title='<div style="margin-bottom:6px"><b style="font-size:16px">'+(s.name||code)+'</b>（'+code+'）<span class="dim" style="font-size:12px;margin-left:6px">'+(s.sector||'未知行业')+'</span></div>';
+  if(hitCond(s)&&e){
+    const base=e.base||0;
+    const c5=e.close&&e.close.length>=6?e.close[5]:null;
+    const c10=e.close&&e.close.length>=11?e.close[10]:null;
+    const p5=base&&c5?(c5.c/base-1)*100:null;
+    const p10=base&&c10?(c10.c/base-1)*100:null;
+    box.innerHTML=title
+      +'<div style="color:#888;font-size:12px;margin-bottom:8px">命中日 '+e.hit_date+' · 基准价 '+base+'</div>'
+      +'<div style="display:flex;gap:24px">'
+      +'<div><div class="dim" style="font-size:12px">5日累计</div><b class="'+pCls(p5)+'" style="font-size:22px">'+(p5==null?'未走满':fmtPct(p5))+'</b>'+(p5==null?'<div class="dim" style="font-size:11px">已 '+(e.close?e.close.length-1:0)+' 日</div>':'')+'</div>'
+      +'<div><div class="dim" style="font-size:12px">10日累计</div><b class="'+pCls(p10)+'" style="font-size:22px">'+(p10==null?'未走满':fmtPct(p10))+'</b>'+(p10==null?'<div class="dim" style="font-size:11px">已 '+(e.close?e.close.length-1:0)+' 日</div>':'')+'</div>'
+      +'</div>';
+  }else if(hitCond(s)){
+    box.innerHTML=title+'<div>已命中3条件，跟踪数据生成中…</div>';
+  }else{
+    box.innerHTML=title+'<div class="dim">未命中跟踪条件（需 净利同比&gt;0 且 指标1≤-7 且 行业净额&gt;0且行业涨跌&gt;0）</div>';
+  }
+  document.getElementById('hitmodal').style.display='flex';
+}
+function closeModal(){document.getElementById('hitmodal').style.display='none';}
+document.addEventListener('click',function(ev){if(ev.target.id==='hitmodal')closeModal();});
 </script>
 </body>
 </html>

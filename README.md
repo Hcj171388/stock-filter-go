@@ -54,6 +54,7 @@ cd ../stock-select && ./stock-select       # 监听 18090
 - 数据源：东财 `push2delay` clist（行情 + 行业 `f62` 主力净流入）+ 腾讯 `proxy.finance.qq.com` 单只K线（磁盘缓存 25min TTL）+ 本地 `data/yjgg.jsonl`（10jqka 业绩缓存）
 - 后台每 30 分钟自动扫描 + `POST /api/refresh` 手动触发；接口 `/api/snapshot`、`/api/refresh`、`/api/status`
 - 页面：个股 12 列表格，净利同比 / 行业涨跌 / 行业净额 三列红涨绿跌色标 + 前端全量过滤
+- **命中跟踪**：命中 3 条件（净利同比>0 且 指标1≤-7 且 行业净额>0 且 行业涨跌>0）的股票自动记录基准，跟踪其后 10 个交易日；点股票名弹窗直接显示 5日/10日 累计涨跌幅（后台每轮算好渲染，不临时查）
 
 ## 数据源说明
 
@@ -62,6 +63,7 @@ cd ../stock-select && ./stock-select       # 监听 18090
 - 静态资源 ECharts 随仓库分发（`stock-scanner/static/` 与 `stock-portfolio/static/`），离线可用
 - 行业主力净流入取东财 clist `f62`（元，有正负，/1e8 转亿元）；`f106` 在板块场景无负值、已废弃
 - 业绩数据走本地缓存 `data/yjgg.jsonl`（10jqka 业绩数据库，每日增量更新）
+- 命中跟踪表 `data/hittrack.json`（所有命中股票共享，按代码为 key；重复命中替换旧条目，未命中且已跟踪则逐日补录收盘至多 11 天）
 
 ## 协议
 
