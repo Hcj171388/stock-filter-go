@@ -48,6 +48,7 @@ type SelectStock struct {
 	PubDate  *string  `json:"pub_date"`
 	Ind1     *float64 `json:"ind1"`
 	Ind2     *float64 `json:"ind2"`
+	MainNet  *float64 `json:"main_net"` // 主力净流入（亿元，东财 clist f62）
 }
 
 type IndustryInfo struct {
@@ -134,7 +135,7 @@ func fetchMainBoard() []map[string]interface{} {
 	for pn := 1; pn <= 100; pn++ {
 		data, err := stocklib.FetchEM(map[string]string{
 			"pn": strconv.Itoa(pn), "pz": "100", "fid": "f12",
-			"fs": MAIN_BOARD_FS, "fields": "f12,f14,f2,f3,f8,f100",
+			"fs": MAIN_BOARD_FS, "fields": "f12,f14,f2,f3,f8,f100,f62",
 		})
 		if err != nil {
 			log.Printf("[main] 主板列表第%d页失败: %v", pn, err)
@@ -740,6 +741,12 @@ func scanOnce() *Snapshot {
 			continue // 停牌/无效
 		}
 		fi, _ := npMap[code]
+		// f62=个股主力净流入（元），换算为亿元（与行业净额同单位）
+		var mainNet *float64
+		if raw := toFloatPtr(it["f62"]); raw != nil {
+			yi := round2(*raw / 1e8)
+			mainNet = &yi
+		}
 		var ind1, ind2 *float64
 		if arr, okK := klineMap[MarketSymbol(code)]; okK {
 			ind1 = calcInd1(arr)
@@ -752,7 +759,7 @@ func scanOnce() *Snapshot {
 			Code: code, Name: itName(it), Price: price,
 			Change: toFloatPtr(it["f3"]), Turnover: toFloatPtr(it["f8"]),
 			Sector: toStrPtr(it["f100"]), NPYoy: fi.SJLTZ, PubDate: fi.Notice,
-			Ind1: ind1, Ind2: ind2,
+			Ind1: ind1, Ind2: ind2, MainNet: mainNet,
 		})
 	}
 

@@ -41,8 +41,6 @@ tr:hover{background:#f8f9fa}
 .ind-neg{color:#e74c3c;font-weight:bold}
 .ind-pos{color:#27ae60}
 .dim{color:#bbb}
-.tracked-code{color:#e74c3c;font-weight:bold}
-.tracked-code-blue{color:#2563eb;font-weight:bold}
 .seg{display:flex;gap:4px;flex-wrap:wrap}
 .seg button{padding:4px 10px;border:1px solid #dde1e6;border-radius:6px;background:#fff;font-size:12px;cursor:pointer;color:#333}
 .seg button.on{background:#667eea;border-color:#667eea;color:#fff}
@@ -99,9 +97,6 @@ tr:hover{background:#f8f9fa}
     <div class="filter-item">
       <label><input type="checkbox" id="f-industry" onchange="applyFilters()"> 行业净额&gt;0 且 行业涨跌&gt;0</label>
     </div>
-    <div class="filter-item">
-      <label><input type="checkbox" id="f-mainup" onchange="applyFilters()"> 上涨且主力净额&lt;0</label>
-    </div>
     <button class="reset-btn" onclick="resetFilters()">重置</button>
   </div>
   <div class="stock-table">
@@ -111,12 +106,12 @@ tr:hover{background:#f8f9fa}
           <tr id="thead-row">
             <th data-k="code">代码</th><th data-k="name">名称</th>
             <th data-k="price">最新价</th><th data-k="change">涨跌%</th>
-            <th data-k="turnover">换手%</th><th data-k="main_net">主力净额(亿)</th><th data-k="np_yoy">净利同比%</th><th data-k="pub_date">发布日期</th>
+            <th data-k="turnover">换手%</th><th data-k="np_yoy">净利同比%</th><th data-k="pub_date">发布日期</th>
             <th data-k="ind1">指标1</th><th data-k="ind2">指标2</th>
             <th data-k="sector">行业</th><th data-k="ind_change">行业涨跌%</th><th data-k="ind_netin">行业净额(亿)</th>
           </tr>
         </thead>
-        <tbody id="tbody"><tr><td colspan="13" class="loading">加载中…</td></tr></tbody>
+        <tbody id="tbody"><tr><td colspan="12" class="loading">加载中…</td></tr></tbody>
       </table>
     </div>
     <div class="pager" id="pager"></div>
@@ -138,14 +133,6 @@ function indOf(s){
   if(!s.sector) return null;
   return indMap[s.sector]||null;
 }
-function codeClass(code){
-  const e=snap&&snap.hit_track?snap.hit_track[code]:null;
-  if(!e||!e.close||!e.close.length)return '';
-  if(e.close.length<11)return 'tracked-code';                 // 跟踪中：红
-  const end=e.close[e.close.length-1].d;                      // 最后记录日
-  const days=(Date.now()-new Date(end+'T00:00:00Z').getTime())/86400000;
-  return days<=30?'tracked-code-blue':'';                      // 结束30天内蓝，超30天无
-}
 function fmt(v,d){ return v==null?'-':(Math.round(v*10**d)/10**d).toFixed(d); }
 
 function applyFilters(){
@@ -159,7 +146,6 @@ function applyFilters(){
   const ind2On=document.getElementById('f-ind2-on').checked;
   const ind2Max=parseFloat(document.getElementById('f-ind2').value);
   const indOn=document.getElementById('f-industry').checked;
-  const mainUpOn=document.getElementById('f-mainup').checked;
 
   function priceOk(p){
     if(priceV==='gt2')return p>2;
@@ -179,7 +165,6 @@ function applyFilters(){
       if(!ix||ix.netin==null||ix.change==null)return false;
       if(!(ix.netin>0&&ix.change>0))return false;
     }
-    if(mainUpOn&&!(s.change!=null&&s.change>0&&s.main_net!=null&&s.main_net<0))return false;
     return true;
   });
   doSort();
@@ -210,23 +195,21 @@ function render(){
     const ind1Cls=s.ind1!=null?(s.ind1<=-7?'ind-neg':'ind-pos'):'';
     const indCls=ix&&ix.change!=null?(ix.change>0?'positive':(ix.change<0?'negative':'dim')):'';
     const indNetCls=ix&&ix.netin!=null?(ix.netin>0?'positive':(ix.netin<0?'negative':'dim')):'';
-    const npCls=s.np_yoy!=null?(s.np_yoy>0?'positive':(s.np_yoy<0?'negative':'dim')):'';
     return `<tr>
-      <td class="${codeClass(s.code)}">${s.code}</td>
-      <td><span class="stock-name" onclick="showDetail('${s.code}')">${s.name||s.code}</span></td>
+      <td>${s.code}</td>
+      <td><a class="stock-name" href="https://www.10jqka.com.cn/quote/${s.code}/" target="_blank">${s.name||s.code}</a></td>
       <td>${fmt(s.price,2)}</td>
       <td class="${chgCls}">${s.change==null?'-':(s.change>0?'+':'')+fmt(s.change,2)}</td>
       <td>${fmt(s.turnover,2)}</td>
-      <td class="${s.main_net!=null?(s.main_net>0?'positive':(s.main_net<0?'negative':'dim')):''}">${s.main_net==null?'-':fmt(s.main_net,1)}</td>
-      <td class="${npCls}">${s.np_yoy==null?'-':fmt(s.np_yoy,1)}</td>
+      <td>${s.np_yoy==null?'-':fmt(s.np_yoy,1)}</td>
       <td>${s.pub_date||'-'}</td>
       <td class="${ind1Cls}">${fmt(s.ind1,2)}</td>
       <td>${s.ind2==null?'-':s.ind2}</td>
       <td>${s.sector||'-'}</td>
-      <td class="${indCls}">${ix?fmt(ix.change,2):'-'}</td>
-      <td class="${indNetCls}">${ix&&ix.netin!=null?fmt(ix.netin,1):'-'}</td>
+      <td>${ix?fmt(ix.change,2):'-'}</td>
+      <td>${ix&&ix.netin!=null?fmt(ix.netin,1):'-'}</td>
     </tr>`}).join(''):
-    '<tr><td colspan="13" class="loading">无符合条件的股票</td></tr>';
+    '<tr><td colspan="12" class="loading">无符合条件的股票</td></tr>';
   // 分页
   const pages=Math.max(1,Math.ceil(total/PAGE));
   if(page>pages)page=pages;
@@ -244,7 +227,6 @@ function resetFilters(){
   document.getElementById('f-ind1-on').checked=false;
   document.getElementById('f-ind2-on').checked=false;
   document.getElementById('f-industry').checked=false;
-  document.getElementById('f-mainup').checked=false;
   document.querySelectorAll('#f-price button').forEach(b=>b.classList.toggle('on',b.dataset.v===''));
   applyFilters();
 }
@@ -276,7 +258,7 @@ async function loadSnapshot(){
     document.getElementById('cacheinfo').textContent='数据源：东方财富(行情/财务/行业) + 腾讯(日K线) · 默认无筛选=全部数据 · 指标1=MA(合一,10) · 指标2=SUM(X>0,7)';
     applyFilters();
   }catch(e){
-    document.getElementById('tbody').innerHTML='<tr><td colspan="13" class="loading">数据加载中或暂无（首轮扫描未完成），30秒后自动重试</td></tr>';
+    document.getElementById('tbody').innerHTML='<tr><td colspan="12" class="loading">数据加载中或暂无（首轮扫描未完成），30秒后自动重试</td></tr>';
     setTimeout(loadSnapshot,30000);
   }
 }
@@ -296,52 +278,6 @@ async function doRefresh(){
   },3000);
 }
 loadSnapshot();
-</script>
-<div id="hitmodal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:999;align-items:center;justify-content:center">
-  <div style="background:#fff;border-radius:10px;padding:16px 20px;min-width:280px;box-shadow:0 6px 24px rgba(0,0,0,.35)">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-      <b style="font-size:15px;color:#667eea">命中跟踪 · 5日/10日累计</b>
-      <span onclick="closeModal()" style="cursor:pointer;font-size:22px;line-height:1;color:#bbb">×</span>
-    </div>
-    <div id="modal-body" style="font-size:14px;line-height:2;color:#333"></div>
-  </div>
-</div>
-<script>
-function hitCond(s){
-  if(s.np_yoy==null||s.np_yoy<=0)return false;
-  if(s.ind1==null||s.ind1>-7)return false;
-  const ix=indOf(s);
-  return !!(ix&&ix.netin!=null&&ix.netin>0&&ix.change!=null&&ix.change>0);
-}
-function fmtPct(v){return v==null?'-':(v>0?'+':'')+v.toFixed(2)+'%';}
-function pCls(v){return v==null?'dim':(v>0?'positive':(v<0?'negative':'dim'));}
-function showDetail(code){
-  const s=(snap.stocks||[]).find(x=>x.code===code);
-  if(!s)return;
-  const e=(snap.hit_track||{})[code];
-  const box=document.getElementById('modal-body');
-  const title='<div style="margin-bottom:6px"><b style="font-size:16px">'+(s.name||code)+'</b>（'+code+'）<span class="dim" style="font-size:12px;margin-left:6px">'+(s.sector||'未知行业')+'</span></div>';
-  if(hitCond(s)&&e){
-    const base=e.base||0;
-    const c5=e.close&&e.close.length>=6?e.close[5]:null;
-    const c10=e.close&&e.close.length>=11?e.close[10]:null;
-    const p5=base&&c5?(c5.c/base-1)*100:null;
-    const p10=base&&c10?(c10.c/base-1)*100:null;
-    box.innerHTML=title
-      +'<div style="color:#888;font-size:12px;margin-bottom:8px">命中日 '+e.hit_date+' · 基准价 '+base+'</div>'
-      +'<div style="display:flex;gap:24px">'
-      +'<div><div class="dim" style="font-size:12px">5日累计</div><b class="'+pCls(p5)+'" style="font-size:22px">'+(p5==null?'未走满':fmtPct(p5))+'</b>'+(p5==null?'<div class="dim" style="font-size:11px">已 '+(e.close?e.close.length-1:0)+' 日</div>':'')+'</div>'
-      +'<div><div class="dim" style="font-size:12px">10日累计</div><b class="'+pCls(p10)+'" style="font-size:22px">'+(p10==null?'未走满':fmtPct(p10))+'</b>'+(p10==null?'<div class="dim" style="font-size:11px">已 '+(e.close?e.close.length-1:0)+' 日</div>':'')+'</div>'
-      +'</div>';
-  }else if(hitCond(s)){
-    box.innerHTML=title+'<div>已命中3条件，跟踪数据生成中…</div>';
-  }else{
-    box.innerHTML=title+'<div class="dim">未命中跟踪条件（需 净利同比&gt;0 且 指标1≤-7 且 行业净额&gt;0且行业涨跌&gt;0）</div>';
-  }
-  document.getElementById('hitmodal').style.display='flex';
-}
-function closeModal(){document.getElementById('hitmodal').style.display='none';}
-document.addEventListener('click',function(ev){if(ev.target.id==='hitmodal')closeModal();});
 </script>
 </body>
 </html>
