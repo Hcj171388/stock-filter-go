@@ -41,6 +41,7 @@ tr:hover{background:#f8f9fa}
 .ind-neg{color:#e74c3c;font-weight:bold}
 .ind-pos{color:#27ae60}
 .dim{color:#bbb}
+.tracked-code{color:#e74c3c;font-weight:bold}
 .seg{display:flex;gap:4px;flex-wrap:wrap}
 .seg button{padding:4px 10px;border:1px solid #dde1e6;border-radius:6px;background:#fff;font-size:12px;cursor:pointer;color:#333}
 .seg button.on{background:#667eea;border-color:#667eea;color:#fff}
@@ -133,6 +134,10 @@ function indOf(s){
   if(!s.sector) return null;
   return indMap[s.sector]||null;
 }
+function isTracking(code){
+  const e=snap&&snap.hit_track?snap.hit_track[code]:null;
+  return !!(e&&e.close&&e.close.length<11);
+}
 function fmt(v,d){ return v==null?'-':(Math.round(v*10**d)/10**d).toFixed(d); }
 
 function applyFilters(){
@@ -197,7 +202,7 @@ function render(){
     const indNetCls=ix&&ix.netin!=null?(ix.netin>0?'positive':(ix.netin<0?'negative':'dim')):'';
     const npCls=s.np_yoy!=null?(s.np_yoy>0?'positive':(s.np_yoy<0?'negative':'dim')):'';
     return `<tr>
-      <td>${s.code}</td>
+      <td class="${isTracking(s.code)?'tracked-code':''}">${s.code}</td>
       <td><span class="stock-name" onclick="showDetail('${s.code}')">${s.name||s.code}</span></td>
       <td>${fmt(s.price,2)}</td>
       <td class="${chgCls}">${s.change==null?'-':(s.change>0?'+':'')+fmt(s.change,2)}</td>
