@@ -102,6 +102,9 @@ tr:hover{background:#f8f9fa}
     <div class="filter-item">
       <label><input type="checkbox" id="f-mainup" onchange="applyFilters()"> 上涨且主力净额&lt;0</label>
     </div>
+    <div class="filter-item">
+      <label><input type="checkbox" id="f-delta" onchange="applyFilters()"> DELTA上穿0</label>
+    </div>
     <button class="reset-btn" onclick="resetFilters()">重置</button>
   </div>
   <div class="stock-table">
@@ -160,6 +163,7 @@ function applyFilters(){
   const ind2Max=parseFloat(document.getElementById('f-ind2').value);
   const indOn=document.getElementById('f-industry').checked;
   const mainUpOn=document.getElementById('f-mainup').checked;
+  const deltaOn=document.getElementById('f-delta').checked;
 
   function priceOk(p){
     if(priceV==='gt2')return p>2;
@@ -180,6 +184,7 @@ function applyFilters(){
       if(!(ix.netin>0&&ix.change>0))return false;
     }
     if(mainUpOn&&!(s.change!=null&&s.change>0&&s.main_net!=null&&s.main_net<0))return false;
+    if(deltaOn&&!(s.delta_up===true))return false;
     return true;
   });
   doSort();
@@ -245,6 +250,7 @@ function resetFilters(){
   document.getElementById('f-ind2-on').checked=false;
   document.getElementById('f-industry').checked=false;
   document.getElementById('f-mainup').checked=false;
+  document.getElementById('f-delta').checked=false;
   document.querySelectorAll('#f-price button').forEach(b=>b.classList.toggle('on',b.dataset.v===''));
   applyFilters();
 }

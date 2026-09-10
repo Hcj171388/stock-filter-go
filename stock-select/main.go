@@ -49,6 +49,8 @@ type SelectStock struct {
 	Ind1     *float64 `json:"ind1"`
 	Ind2     *float64 `json:"ind2"`
 	MainNet  *float64 `json:"main_net"` // 主力净流入（亿元，东财 clist f62）
+	Delta    *float64 `json:"delta"`    // DELTA 当日值
+	DeltaUp  *bool    `json:"delta_up"` // DELTA 上穿0（今日>0 且 昨日≤0，TDX CROSS 语义）
 }
 
 type IndustryInfo struct {
@@ -472,6 +474,34 @@ func calcInd2(b []KBar) *float64 {
 	}
 	return &cnt
 }
+
+// calcDelta DELTA=(MA(C,40)-MA(C,20))-(MA(C,20)-MA(C,10))-(MA(C,10)-MA(C,5))-(MA(C,5)-MA(C,3))
+// 返回 (当日DELTA值, 是否上穿0)：上穿=TDX CROSS 语义，今日 DELTA>0 且 昨日 DELTA≤0
+func calcDelta(b []KBar) (*float64, *bool) {
+	if len(b) < 41 {
+		return nil, nil
+	}
+	closes := make([]float64, len(b))
+	for i := range b {
+		closes[i] = b[i].Clse
+	}
+	// delta 以 closes[:i+1] 末端为基准计算
+	dat := func(i int) float64 {
+		maAt := func(n int) float64 { m, _ := ma(closes[:i+1], n); return m }
+		a, c, d, e := maAt(40), maAt(20), maAt(10), maAt(5)
+		f := 0.0
+		if len(closes[:i+1]) >= 3 {
+			f, _ = ma(closes[:i+1], 3)
+		}
+		return (a - c) - (c - d) - (d - e) - (e - f)
+	}
+	i := len(b) - 1
+	today := dat(i)
+	yest := dat(i - 1)
+	up := today > 0 && yest <= 0
+	rt := round2(today)
+	return &rt, &up
+}
 // ============ 5. 净利润同比+公告日（10jqka业绩数据库 本地合并缓存）============
 // 缓存: /root/cow/data/yjgg.jsonl（scripts/fetch_yjgg_bootstrap.py 建仓, fetch_yjgg_daily.py 每日12:00增量）
 // 口径: 逐股取最新报告期; 同期内 notice>express>preview, 同种取 declare_date 最新; yoy 空值用上下限中值补
@@ -748,9 +778,12 @@ func scanOnce() *Snapshot {
 			mainNet = &yi
 		}
 		var ind1, ind2 *float64
+		var delta *float64
+		var deltaUp *bool
 		if arr, okK := klineMap[MarketSymbol(code)]; okK {
 			ind1 = calcInd1(arr)
 			ind2 = calcInd2(arr)
+			delta, deltaUp = calcDelta(arr)
 			if len(arr) > 0 && arr[len(arr)-1].Date > klineDate {
 				klineDate = arr[len(arr)-1].Date
 			}
@@ -760,6 +793,7 @@ func scanOnce() *Snapshot {
 			Change: toFloatPtr(it["f3"]), Turnover: toFloatPtr(it["f8"]),
 			Sector: toStrPtr(it["f100"]), NPYoy: fi.SJLTZ, PubDate: fi.Notice,
 			Ind1: ind1, Ind2: ind2, MainNet: mainNet,
+			Delta: delta, DeltaUp: deltaUp,
 		})
 	}
 
