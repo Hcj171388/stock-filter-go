@@ -679,17 +679,18 @@ func updateHitTrack(stocks []SelectStock, industries []IndustryInfo, klineMap ma
 		}
 		if hit {
 			e := track[s.Code]
-			if e == nil || e.HitDate != today {
+			// 无条目 或 已满11天 → 新建/重置；未满11天保留基准不替换
+			if e == nil || len(e.Close) >= 11 {
 				track[s.Code] = &HitEntry{
 					Name: s.Name, Sector: sec, HitDate: today,
 					Base: round2(last), Close: []HCPoint{{Date: today, Close: round2(last)}},
 				}
 			}
-		} else {
-			e := track[s.Code]
-			if e != nil && len(e.Close) < 11 && last > 0 && today > e.HitDate && e.Close[len(e.Close)-1].Date != today {
-				e.Close = append(e.Close, HCPoint{Date: today, Close: round2(last)})
-			}
+		}
+		// 已在跟踪且未满11天 → 补录今日收盘（命中未重置/未命中 均适用）
+		e := track[s.Code]
+		if e != nil && len(e.Close) < 11 && last > 0 && today > e.HitDate && e.Close[len(e.Close)-1].Date != today {
+			e.Close = append(e.Close, HCPoint{Date: today, Close: round2(last)})
 		}
 	}
 	saveHitTrack(track)
