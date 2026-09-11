@@ -506,32 +506,31 @@ func calcDelta(b []KBar) (*float64, *bool) {
 }
 
 // calcHH HH=HHV(CC,14), CC=(C-LLV(C,N))/(HHV(C,N)-LLV(C,N)), N=SUMBARS(VOL,CAPITAL)
-// N 为距最近一次 换手率(VOL/CAPITAL*100)>=100% 的K线数（至少1）；区间无波动(HHV==LLV)返回 nil
+// SUMBARS(VOL,CAPITAL)：从当日向前累加成交量（换手率%），累加≥100% 即返回这段周期数（含当日）；
+// 全部可见K线内累不满则 N=全可见长度。区间无波动(HHV==LLV)该日无值
 func calcHH(b []KBar) *float64 {
 	n := len(b)
 	if n < 14 {
 		return nil
 	}
 	i := n - 1
-	// N = SUMBARS(VOL,CAPITAL)：向前找到换手率>=100% 的位置，间隔K线数（含当日）
-	cand := -1
-	for j := i; j >= 0; j-- {
-		if b[j].Turn >= 100 {
-			cand = j
-			break
-		}
-	}
-	nn := i - cand + 1
-	if cand < 0 {
-		nn = n // 全部可见K线内无 ≥100% 换手日 → N=全可见长度（TDX 口径，不硬编码）
-	} else if nn < 14 {
-		nn = 14
-	}
-	// 逐日计算 CC，取近14日最高
+	// 逐日计算 CC，取近14日最高；每个历史日 j 用其当日的 SUMBARS（TDX 序列逐bar口径）
 	hi := math.Inf(-1)
 	for j := i - 13; j <= i; j++ {
+		nnj := 0
+		sumj := 0.0
+		for x := j; x >= 0; x-- {
+			sumj += b[x].Turn
+			nnj++
+			if sumj >= 100 {
+				break
+			}
+		}
+		if nnj < 14 {
+			nnj = 14
+		}
 		low, high := math.Inf(1), math.Inf(-1)
-		for k := j - nn + 1; k <= j; k++ {
+		for k := j - nnj + 1; k <= j; k++ {
 			if k < 0 {
 				continue // 超出可见K线范围（N=全长度时），从0起算
 			}
