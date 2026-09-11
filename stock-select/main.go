@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -51,6 +52,7 @@ type SelectStock struct {
 	MainNet  *float64 `json:"main_net"` // 主力净流入（亿元，东财 clist f62）
 	Delta    *float64 `json:"delta"`    // DELTA 当日值
 	DeltaUp  *bool    `json:"delta_up"` // DELTA 上穿0（今日>0 且 昨日≤0，TDX CROSS 语义）
+	HH       *float64 `json:"hh"`       // HH=HHV(CC,14), CC=(C-LLV(C,N))/(HHV(C,N)-LLV(C,N)), N=SUMBARS(VOL,CAPITAL)
 }
 
 type IndustryInfo struct {
@@ -502,6 +504,58 @@ func calcDelta(b []KBar) (*float64, *bool) {
 	rt := round2(today)
 	return &rt, &up
 }
+
+// calcHH HH=HHV(CC,14), CC=(C-LLV(C,N))/(HHV(C,N)-LLV(C,N)), N=SUMBARS(VOL,CAPITAL)
+// N 为距最近一次 换手率(VOL/CAPITAL*100)>=100% 的K线数（至少1）；区间无波动(HHV==LLV)返回 nil
+func calcHH(b []KBar) *float64 {
+	n := len(b)
+	if n < 14 {
+		return nil
+	}
+	i := n - 1
+	// N = SUMBARS(VOL,CAPITAL)：向前找到换手率>=100% 的位置，间隔K线数（含当日）
+	cand := -1
+	for j := i; j >= 0; j-- {
+		if b[j].Turn >= 100 {
+			cand = j
+			break
+		}
+	}
+	nn := i - cand + 1
+	if cand < 0 {
+		nn = n // 全部可见K线内无 ≥100% 换手日 → N=全可见长度（TDX 口径，不硬编码）
+	} else if nn < 14 {
+		nn = 14
+	}
+	// 逐日计算 CC，取近14日最高
+	hi := math.Inf(-1)
+	for j := i - 13; j <= i; j++ {
+		low, high := math.Inf(1), math.Inf(-1)
+		for k := j - nn + 1; k <= j; k++ {
+			if k < 0 {
+				continue // 超出可见K线范围（N=全长度时），从0起算
+			}
+			if b[k].Clse < low {
+				low = b[k].Clse
+			}
+			if b[k].Clse > high {
+				high = b[k].Clse
+			}
+		}
+		if high <= low {
+			continue // 区间无波动，CC 无定义
+		}
+		cc := (b[j].Clse - low) / (high - low)
+		if cc > hi {
+			hi = cc
+		}
+	}
+	if hi == math.Inf(-1) {
+		return nil
+	}
+	rv := round2(hi)
+	return &rv
+}
 // ============ 5. 净利润同比+公告日（10jqka业绩数据库 本地合并缓存）============
 // 缓存: /root/cow/data/yjgg.jsonl（scripts/fetch_yjgg_bootstrap.py 建仓, fetch_yjgg_daily.py 每日12:00增量）
 // 口径: 逐股取最新报告期; 同期内 notice>express>preview, 同种取 declare_date 最新; yoy 空值用上下限中值补
@@ -780,10 +834,12 @@ func scanOnce() *Snapshot {
 		var ind1, ind2 *float64
 		var delta *float64
 		var deltaUp *bool
+		var hh *float64
 		if arr, okK := klineMap[MarketSymbol(code)]; okK {
 			ind1 = calcInd1(arr)
 			ind2 = calcInd2(arr)
 			delta, deltaUp = calcDelta(arr)
+			hh = calcHH(arr)
 			if len(arr) > 0 && arr[len(arr)-1].Date > klineDate {
 				klineDate = arr[len(arr)-1].Date
 			}
@@ -793,7 +849,7 @@ func scanOnce() *Snapshot {
 			Change: toFloatPtr(it["f3"]), Turnover: toFloatPtr(it["f8"]),
 			Sector: toStrPtr(it["f100"]), NPYoy: fi.SJLTZ, PubDate: fi.Notice,
 			Ind1: ind1, Ind2: ind2, MainNet: mainNet,
-			Delta: delta, DeltaUp: deltaUp,
+			Delta: delta, DeltaUp: deltaUp, HH: hh,
 		})
 	}
 
