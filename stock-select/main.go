@@ -52,6 +52,7 @@ type SelectStock struct {
 	MainNet  *float64 `json:"main_net"` // 主力净流入（亿元，东财 clist f62）
 	Delta    *float64 `json:"delta"`    // DELTA 当日值
 	DeltaUp  *bool    `json:"delta_up"` // DELTA 上穿0（今日>0 且 昨日≤0，TDX CROSS 语义）
+	CmdUp    *bool    `json:"cmd_up"`   // CMDIF 上穿 CMAD（TDX CROSS 语义）
 	HH       *float64 `json:"hh"`       // HH=HHV(CC,14), CC=(C-LLV(C,N))/(HHV(C,N)-LLV(C,N)), N=SUMBARS(VOL,CAPITAL)
 }
 
@@ -395,6 +396,71 @@ func ma(values []float64, n int) (float64, bool) {
 		sum += values[i]
 	}
 	return sum / float64(n), true
+}
+
+// ema 标准 EMA 序列（首值用 SMA 初始化），供 MACD 族指标使用
+func emaSeries(values []float64, n int) []float64 {
+	if len(values) == 0 {
+		return nil
+	}
+	coef := 2.0 / float64(n+1)
+	out := make([]float64, len(values))
+	// 首值用前 n 个可用值的 SMA 初始化
+	s := 0.0
+	for i := 0; i < n && i < len(values); i++ {
+		s += values[i]
+	}
+	out[0] = s / float64(n)
+	for i := 1; i < len(values); i++ {
+		out[i] = values[i]*coef + out[i-1]*(1-coef)
+	}
+	return out
+}
+
+// calcCmdifCross CMDIF上穿CMAD
+// DIF=EMA(C,12)-EMA(C,26); DEA=EMA(DIF,9); MACD柱=2*(DIF-DEA)
+// CMDIF=MA(MACD柱,5); CMAD=MA(DEA,5); 上穿=TDX CROSS 语义：今日 CMDIF>CMAD 且 昨日 CMDIF<=CMAD
+func calcCmdifCross(b []KBar) *bool {
+	n := len(b)
+	if n < 40 { // 26(EMA快慢需26) + EMA(DIF,9) 收敛 + MA5，给足 40 根
+		return nil
+	}
+	closes := make([]float64, n)
+	for i := range b {
+		closes[i] = b[i].Clse
+	}
+	ema12 := emaSeries(closes, 12)
+	ema26 := emaSeries(closes, 26)
+	dif := make([]float64, n)
+	for i := 0; i < n; i++ {
+		dif[i] = ema12[i] - ema26[i]
+	}
+	dea := emaSeries(dif, 9)
+	macdBar := make([]float64, n)
+	for i := 0; i < n; i++ {
+		macdBar[i] = 2 * (dif[i] - dea[i])
+	}
+	// CMDIF / CMAD 需要各自 5 日 MA，末端 5 个值
+	cmdToday, cmdYest := 0.0, 0.0
+	cmadToday, cmadYest := 0.0, 0.0
+	for i := n - 1; i >= n-2; i-- {
+		if m, ok := ma(macdBar[:i+1], 5); ok {
+			if i == n-1 {
+				cmdToday = m
+			} else {
+				cmdYest = m
+			}
+		}
+		if m, ok := ma(dea[:i+1], 5); ok {
+			if i == n-1 {
+				cmadToday = m
+			} else {
+				cmadYest = m
+			}
+		}
+	}
+	up := cmdToday > cmadToday && cmdYest <= cmadYest
+	return &up
 }
 
 // calcInd1 指标1：涨=(C-REFC)/REFC, 换手=VOL/CAPITAL, 比率=MA(涨/换手,5),
@@ -833,11 +899,13 @@ func scanOnce() *Snapshot {
 		var ind1, ind2 *float64
 		var delta *float64
 		var deltaUp *bool
+		var cmdUp *bool
 		var hh *float64
 		if arr, okK := klineMap[MarketSymbol(code)]; okK {
 			ind1 = calcInd1(arr)
 			ind2 = calcInd2(arr)
 			delta, deltaUp = calcDelta(arr)
+			cmdUp = calcCmdifCross(arr)
 			hh = calcHH(arr)
 			if len(arr) > 0 && arr[len(arr)-1].Date > klineDate {
 				klineDate = arr[len(arr)-1].Date
@@ -848,7 +916,7 @@ func scanOnce() *Snapshot {
 			Change: toFloatPtr(it["f3"]), Turnover: toFloatPtr(it["f8"]),
 			Sector: toStrPtr(it["f100"]), NPYoy: fi.SJLTZ, PubDate: fi.Notice,
 			Ind1: ind1, Ind2: ind2, MainNet: mainNet,
-			Delta: delta, DeltaUp: deltaUp, HH: hh,
+			Delta: delta, DeltaUp: deltaUp, CmdUp: cmdUp, HH: hh,
 		})
 	}
 

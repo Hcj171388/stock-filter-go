@@ -53,9 +53,10 @@ cd ../stock-select && ./stock-select       # 监听 18090
 - 后端只取数算指标（零筛选），所有筛选逻辑在前端单文件 `page.html` 完成
 - 数据源：东财 `push2delay` clist（行情含个股 `f62` 主力净流入 + 行业 `f62` 主力净流入）+ 腾讯 `proxy.finance.qq.com` 单只K线（磁盘缓存 25min TTL）+ 本地 `data/yjgg.jsonl`（10jqka 业绩缓存）
 - 后台每 30 分钟自动扫描 + `POST /api/refresh` 手动触发；接口 `/api/snapshot`、`/api/refresh`、`/api/status`
-- 页面：个股 13 列表格，净利同比 / 主力净额 / 行业涨跌 / 行业净额 四列红涨绿跌色标 + 前端全量过滤（筛选含「上涨且主力净额<0」「DELTA上穿0」「HH<0.2」）
+- 页面：个股 13 列表格，净利同比 / 主力净额 / 行业涨跌 / 行业净额 四列红涨绿跌色标 + 前端全量过滤（筛选含「上涨且主力净额<0」「DELTA上穿0」「HH<0.2」「CMDIF上穿CMAD」）
 - DELTA 指标：`DELTA=(MA(C,40)-MA(C,20))-(MA(C,20)-MA(C,10))-(MA(C,10)-MA(C,5))-(MA(C,5)-MA(C,3))`，基于前复权收盘价；「上穿0」= TDX CROSS 语义（今日 DELTA>0 且 昨日 DELTA≤0），后端算好 `delta`/`delta_up` 随快照下发，前端勾选过滤，K线不足 41 日的股票无值不过筛
 - HH 指标：`N=SUMBARS(VOL,CAPITAL)` = 从当日**向前累加成交量直到 ≥流通股本**（累加换手率达 100%，完全换手）的周期数，含当日；每个历史 bar 用其当日 SUMBARS（TDX 序列逐 bar 口径）；全部可见K线累不满 100% 则 N=全可见长度；单 bar N 最少取 14；`CC=(C-LLV(C,N))/(HHV(C,N)-LLV(C,N))`（区间无波动则该日无值）；`HH=HHV(CC,14)`，后端算好 `hh` 随快照下发，前端「HH<0.2」勾选过滤（筛出近 14 日内曾处于完全换手区间下 20% 位置的低位股，当前约 159/3188）
+- CMDIF上穿CMAD 指标：基于标准 MACD 族——`DIF=EMA(C,12)-EMA(C,26)`、`DEA=EMA(DIF,9)`、`MACD柱=2*(DIF-DEA)`；`CMDIF=MA(MACD柱,5)`、`CMAD=MA(DEA,5)`（5 日平滑均线）；「上穿」= TDX CROSS 语义（今日 CMDIF>CMAD 且 昨日 CMDIF≤CMAD，捕捉 MACD 均线的金叉拐点）；后端算好 `cmd_up` 随快照下发，前端勾选过滤，K线不足 40 日无值不过筛
 - **命中跟踪**：命中 3 条件（净利同比>0 且 指标1≤-7 且 行业净额>0 且 行业涨跌>0）的股票自动记录基准，跟踪其后 10 个交易日；点股票名弹窗直接显示 5日/10日 累计涨跌幅（后台每轮算好渲染，不临时查）
 
 ## 数据源说明

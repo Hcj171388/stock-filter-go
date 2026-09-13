@@ -106,6 +106,9 @@ tr:hover{background:#f8f9fa}
       <label><input type="checkbox" id="f-delta" onchange="applyFilters()"> DELTA上穿0</label>
     </div>
     <div class="filter-item">
+      <label><input type="checkbox" id="f-cmd" onchange="applyFilters()"> CMDIF上穿CMAD</label>
+    </div>
+    <div class="filter-item">
       <label><input type="checkbox" id="f-hh" onchange="applyFilters()"> HH&lt;0.2</label>
     </div>
     <button class="reset-btn" onclick="resetFilters()">重置</button>
@@ -167,6 +170,7 @@ function applyFilters(){
   const indOn=document.getElementById('f-industry').checked;
   const mainUpOn=document.getElementById('f-mainup').checked;
   const deltaOn=document.getElementById('f-delta').checked;
+  const cmdOn=document.getElementById('f-cmd').checked;
   const hhOn=document.getElementById('f-hh').checked;
 
   function priceOk(p){
@@ -189,6 +193,7 @@ function applyFilters(){
     }
     if(mainUpOn&&!(s.change!=null&&s.change>0&&s.main_net!=null&&s.main_net<0))return false;
     if(deltaOn&&!(s.delta_up===true))return false;
+    if(cmdOn&&!(s.cmd_up===true))return false;
     if(hhOn&&!(s.hh!=null&&s.hh<0.2))return false;
     return true;
   });
@@ -256,6 +261,7 @@ function resetFilters(){
   document.getElementById('f-industry').checked=false;
   document.getElementById('f-mainup').checked=false;
   document.getElementById('f-delta').checked=false;
+  document.getElementById('f-cmd').checked=false;
   document.getElementById('f-hh').checked=false;
   document.querySelectorAll('#f-price button').forEach(b=>b.classList.toggle('on',b.dataset.v===''));
   applyFilters();
