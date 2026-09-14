@@ -120,12 +120,12 @@ tr:hover{background:#f8f9fa}
           <tr id="thead-row">
             <th data-k="code">代码</th><th data-k="name">名称</th>
             <th data-k="price">最新价</th><th data-k="change">涨跌%</th>
-            <th data-k="turnover">换手%</th><th data-k="main_net">主力净额(亿)</th><th data-k="np_yoy">净利同比%</th><th data-k="pub_date">发布日期</th>
+            <th data-k="turnover">换手%</th><th data-k="main_net">主力净额(亿)</th><th data-k="efficiency">资金效率</th><th data-k="np_yoy">净利同比%</th><th data-k="pub_date">发布日期</th>
             <th data-k="ind1">指标1</th><th data-k="ind2">指标2</th>
             <th data-k="sector">行业</th><th data-k="ind_change">行业涨跌%</th><th data-k="ind_netin">行业净额(亿)</th>
           </tr>
         </thead>
-        <tbody id="tbody"><tr><td colspan="13" class="loading">加载中…</td></tr></tbody>
+        <tbody id="tbody"><tr><td colspan="14" class="loading">加载中…</td></tr></tbody>
       </table>
     </div>
     <div class="pager" id="pager"></div>
@@ -233,6 +233,7 @@ function render(){
       <td class="${chgCls}">${s.change==null?'-':(s.change>0?'+':'')+fmt(s.change,2)}</td>
       <td>${fmt(s.turnover,2)}</td>
       <td class="${s.main_net!=null?(s.main_net>0?'positive':(s.main_net<0?'negative':'dim')):''}">${s.main_net==null?'-':fmt(s.main_net,1)}</td>
+      <td class="${s.efficiency!=null?(s.efficiency>0?'positive':(s.efficiency<0?'negative':'dim')):''}">${s.efficiency==null?'-':fmt(s.efficiency,2)}</td>
       <td class="${npCls}">${s.np_yoy==null?'-':fmt(s.np_yoy,1)}</td>
       <td>${s.pub_date||'-'}</td>
       <td class="${ind1Cls}">${fmt(s.ind1,2)}</td>
@@ -241,7 +242,7 @@ function render(){
       <td class="${indCls}">${ix?fmt(ix.change,2):'-'}</td>
       <td class="${indNetCls}">${ix&&ix.netin!=null?fmt(ix.netin,1):'-'}</td>
     </tr>`}).join(''):
-    '<tr><td colspan="13" class="loading">无符合条件的股票</td></tr>';
+    '<tr><td colspan="14" class="loading">无符合条件的股票</td></tr>';
   // 分页
   const pages=Math.max(1,Math.ceil(total/PAGE));
   if(page>pages)page=pages;

@@ -50,6 +50,7 @@ type SelectStock struct {
 	Ind1     *float64 `json:"ind1"`
 	Ind2     *float64 `json:"ind2"`
 	MainNet  *float64 `json:"main_net"` // 主力净流入（亿元，东财 clist f62）
+	Efficiency *float64 `json:"efficiency"` // 资金效率 = 涨跌幅% / max(主力净额/流通市值%, 0.1%)
 	Delta    *float64 `json:"delta"`    // DELTA 当日值
 	DeltaUp  *bool    `json:"delta_up"` // DELTA 上穿0（今日>0 且 昨日≤0，TDX CROSS 语义）
 	CmdUp    *bool    `json:"cmd_up"`   // CMDIF 上穿 CMAD（TDX CROSS 语义）
@@ -140,7 +141,7 @@ func fetchMainBoard() []map[string]interface{} {
 	for pn := 1; pn <= 100; pn++ {
 		data, err := stocklib.FetchEM(map[string]string{
 			"pn": strconv.Itoa(pn), "pz": "100", "fid": "f12",
-			"fs": MAIN_BOARD_FS, "fields": "f12,f14,f2,f3,f8,f100,f62",
+			"fs": MAIN_BOARD_FS, "fields": "f12,f14,f2,f3,f8,f100,f62,f21",
 		})
 		if err != nil {
 			log.Printf("[main] 主板列表第%d页失败: %v", pn, err)
@@ -892,9 +893,24 @@ func scanOnce() *Snapshot {
 		fi, _ := npMap[code]
 		// f62=个股主力净流入（元），换算为亿元（与行业净额同单位）
 		var mainNet *float64
+		var mainNetYuan *float64
 		if raw := toFloatPtr(it["f62"]); raw != nil {
 			yi := round2(*raw / 1e8)
 			mainNet = &yi
+			mainNetYuan = raw
+		}
+		// 资金效率 = 涨跌幅% / max(|主力净额/流通市值|, 0.1%)
+		// f3=涨跌幅(已为百分比值), f62=主力净额(元), f21=流通市值(元)
+		var efficiency *float64
+		if chg := toFloatPtr(it["f3"]); chg != nil && mainNetYuan != nil {
+			if fv := toFloatPtr(it["f21"]); fv != nil && *fv > 0 {
+				ratioPct := math.Abs(*mainNetYuan) / *fv * 100
+				if ratioPct < 0.1 {
+					ratioPct = 0.1
+				}
+				eff := round2(*chg / ratioPct)
+				efficiency = &eff
+			}
 		}
 		var ind1, ind2 *float64
 		var delta *float64
@@ -915,7 +931,7 @@ func scanOnce() *Snapshot {
 			Code: code, Name: itName(it), Price: price,
 			Change: toFloatPtr(it["f3"]), Turnover: toFloatPtr(it["f8"]),
 			Sector: toStrPtr(it["f100"]), NPYoy: fi.SJLTZ, PubDate: fi.Notice,
-			Ind1: ind1, Ind2: ind2, MainNet: mainNet,
+			Ind1: ind1, Ind2: ind2, MainNet: mainNet, Efficiency: efficiency,
 			Delta: delta, DeltaUp: deltaUp, CmdUp: cmdUp, HH: hh,
 		})
 	}
