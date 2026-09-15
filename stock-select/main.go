@@ -21,6 +21,7 @@ import (
 )
 
 //go:embed page.html
+// 改 page.html 后需重新 go build 才生效（embed 在编译期固化）
 var pageHTML string
 
 const (
@@ -29,6 +30,8 @@ const (
 	SCAN_INTERVAL  = 1800 // 30分钟
 	MAIN_BOARD_FS  = "m:0+t:6,m:1+t:2" // 沪深主板（x2 同款口径，不含科创/京/创业板）
 	INDUSTRY_FS    = "m:90+t:2"       // 东财行业板块
+	TOP_PANEL_N    = 5          // 产业链面板前N(涨幅榜/净流入榜各取N)
+	SECTORS_TTL_SEC= 300        // 板块榜缓存有效期(秒)
 	KLINE_BATCH    = 200
 	KLINE_DAYS     = 300
 	KLINE_WORKERS  = 8
@@ -58,9 +61,14 @@ type SelectStock struct {
 }
 
 type IndustryInfo struct {
+	Code   string   `json:"code"`   // 板块BK代码(b:BKxxxx查成分股用)
 	Name   string   `json:"name"`
 	Change *float64 `json:"change"`
 	NetIn  *float64 `json:"netin"`
+	Ratio  *float64 `json:"ratio"` // 板块涨跌占比 = 涨跌幅f3 / 净流入亿(f62/1e8)，分母为0时+1e-10防除零
+	RatioPos *float64 `json:"ratio_pos"` // 行业涨跌>0且行业净额>0 时的涨跌占比，否则nil
+	Chain  *[]string `json:"chain"` // 产业链上下游相关板块名（上中下游展开用）
+	ChainRole string  `json:"chain_role"` // 该板块在产业链中的角色:上游/中游/下游/自身
 }
 
 type HCPoint struct {
@@ -83,6 +91,7 @@ type Snapshot struct {
 	KlineDate   string           `json:"kline_date"`
 	Industries  []IndustryInfo   `json:"industries"`
 	Stocks      []SelectStock    `json:"stocks"`
+	SectorPanel *ChainPanel      `json:"sector_panel"`
 	HitTrack    map[string]*HitEntry `json:"hit_track"`
 }
 
@@ -141,7 +150,7 @@ func fetchMainBoard() []map[string]interface{} {
 	for pn := 1; pn <= 100; pn++ {
 		data, err := stocklib.FetchEM(map[string]string{
 			"pn": strconv.Itoa(pn), "pz": "100", "fid": "f12",
-			"fs": MAIN_BOARD_FS, "fields": "f12,f14,f2,f3,f8,f100,f62,f21",
+			"fs": MAIN_BOARD_FS, "fields": "f12,f14,f2,f3,f8,f100,f62,f21,f6",
 		})
 		if err != nil {
 			log.Printf("[main] 主板列表第%d页失败: %v", pn, err)
@@ -177,11 +186,25 @@ func fetchIndustries() []IndustryInfo {
 			if inf.Name == "" {
 				continue
 			}
+			inf.Code, _ = it["f12"].(string)
 			inf.Change = toFloatPtr(it["f3"])
 			// f62=主力净流入（元，有正有负），换算为亿元展示；原 f106 在板块场景无负值已废弃
 			if raw := toFloatPtr(it["f62"]); raw != nil {
 				yi := round2(*raw / 1e8)
 				inf.NetIn = &yi
+			}
+			// 板块涨跌占比 = 涨跌幅f3 / (净流入f62 换算亿)，分母为0加1e-10防除零
+			if inf.Change != nil && inf.NetIn != nil {
+				denom := *inf.NetIn
+				if denom == 0 {
+					denom = 1e-10
+				}
+				r := round2(*inf.Change / denom)
+				inf.Ratio = &r
+			}
+		// 行业涨跌>0 且 行业净额>0 时，额外下发 ratio_pos（同一比值，否则nil）
+			if inf.Change != nil && inf.NetIn != nil && *inf.Change > 0 && *inf.NetIn > 0 {
+				inf.RatioPos = inf.Ratio
 			}
 			out = append(out, inf)
 		}
@@ -189,8 +212,57 @@ func fetchIndustries() []IndustryInfo {
 			break
 		}
 	}
+	// 产业链展开
+	expandChains(out)
 	return out
 }
+
+// expandChains 给每个板块填充 Chain（相关板块名列表）与 ChainRole
+func expandChains(out []IndustryInfo) {
+	for i := range out {
+		name := out[i].Name
+		core := findChainCore(name)
+		if core == "" {
+			if fuzzy := keywordFuzzyChain(name, out); len(fuzzy) > 0 {
+				out[i].Chain = &fuzzy
+			}
+			continue
+		}
+		for _, link := range chainDict {
+			if link.Core != core {
+				continue
+			}
+			var matched []string
+			for _, r := range link.RoleMap {
+				for _, kw := range r.Names {
+					for _, in := range out {
+						if in.Name != name && strings.Contains(in.Name, kw) && !contains(matched, in.Name) {
+							matched = append(matched, in.Name)
+						}
+					}
+				}
+			}
+			if len(matched) > 0 {
+				out[i].Chain = &matched
+				out[i].ChainRole = "相关"
+			}
+			break
+		}
+		if out[i].Chain == nil {
+			out[i].ChainRole = "自身"
+		}
+	}
+}
+
+func contains(list []string, s string) bool {
+	for _, v := range list {
+		if v == s {
+			return true
+		}
+	}
+	return false
+}
+
 // ============ 3. 腾讯单只K线（proxy.finance.qq.com，前复权，含当日换手率）============
 // 注：该接口 param 多 symbol 只有第一个生效，必须单只请求；用磁盘缓存降低重复拉取
 
@@ -893,24 +965,39 @@ func scanOnce() *Snapshot {
 		fi, _ := npMap[code]
 		// f62=个股主力净流入（元），换算为亿元（与行业净额同单位）
 		var mainNet *float64
-		var mainNetYuan *float64
 		if raw := toFloatPtr(it["f62"]); raw != nil {
 			yi := round2(*raw / 1e8)
 			mainNet = &yi
-			mainNetYuan = raw
 		}
-		// 资金效率 = 涨跌幅% / max(|主力净额/流通市值|, 0.1%)
-		// f3=涨跌幅(已为百分比值), f62=主力净额(元), f21=流通市值(元)
+		// 资金效率 = 涨跌幅 / (净流入/成交额/流通市值)，严格按老板公式
+		// f3=涨跌幅(百分比值), f62=主力净流入(元), f6=成交额(元), f21=流通市值(元)
+		// 任一因子为 0 时 +1e-10 防除零（保留原式正负号，不取绝对值）
 		var efficiency *float64
-		if chg := toFloatPtr(it["f3"]); chg != nil && mainNetYuan != nil {
-			if fv := toFloatPtr(it["f21"]); fv != nil && *fv > 0 {
-				ratioPct := math.Abs(*mainNetYuan) / *fv * 100
-				if ratioPct < 0.1 {
-					ratioPct = 0.1
-				}
-				eff := round2(*chg / ratioPct)
-				efficiency = &eff
+		if f3 := toFloatPtr(it["f3"]); f3 != nil {
+			f62v := 0.0
+			if v := toFloatPtr(it["f62"]); v != nil {
+				f62v = *v
 			}
+			f6v := 0.0
+			if v := toFloatPtr(it["f6"]); v != nil {
+				f6v = *v
+			}
+			f21v := 0.0
+			if v := toFloatPtr(it["f21"]); v != nil {
+				f21v = *v
+			}
+			const eps = 1e-10
+			if f62v == 0 {
+				f62v = eps
+			}
+			if f6v == 0 {
+				f6v = eps
+			}
+			if f21v == 0 {
+				f21v = eps
+			}
+			eff := round2((*f3 / (f62v / f6v / f21v)) * 1e-6) // 缩小100万倍，单位=百万
+			efficiency = &eff
 		}
 		var ind1, ind2 *float64
 		var delta *float64
@@ -938,8 +1025,10 @@ func scanOnce() *Snapshot {
 
 	hitTrack := updateHitTrack(stocks, industries, klineMap)
 
+	sectorPanel, _ := topSectorsDual()
 	snap := &Snapshot{
 		GeneratedAt: time.Now().Format("2006-01-02 15:04:05"),
+		SectorPanel: sectorPanel,
 		ElapsedSec:   round2(time.Since(start).Seconds()),
 		Total:        len(stocks),
 		KlineDate:    klineDate,
@@ -1011,6 +1100,18 @@ func apiSnapshot(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(s)
 }
 
+// apiSectorMembers 板块成分股：?code=BKxxxx -> {"code":"BKxxxx","members":["600000",...]}
+// 成分股为东财该板块全部成分股(不限主板),前端再与本地K线名单取交集
+func apiSectorMembers(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	code := r.URL.Query().Get("code")
+	members := sectorMembers(code)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"code": code, "members": members, "count": len(members),
+	})
+}
+
 func apiRefresh(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -1061,6 +1162,7 @@ func main() {
 		http.NotFound(w, r)
 	})
 	http.HandleFunc("/api/snapshot", apiSnapshot)
+	http.HandleFunc("/api/sector-members", apiSectorMembers)
 	http.HandleFunc("/api/refresh", apiRefresh)
 	http.HandleFunc("/api/status", apiStatus)
 

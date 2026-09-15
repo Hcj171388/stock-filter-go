@@ -74,6 +74,12 @@ tr:hover{background:#f8f9fa}
     <div class="stat-card"><div class="stat-value" id="st-ind">-</div><div class="stat-label">行业数</div></div>
     <div class="stat-card"><div class="stat-value" id="st-kdate">-</div><div class="stat-label">K线日期</div></div>
   </div>
+  <!-- 板块双榜面板：涨幅前5/净流入前5，点板块联动下方表格成分股 -->
+  <div id="chain-panel" style="display:none;margin-bottom:10px">
+    <h3 style="font-size:14px;color:#333;margin-bottom:6px">行业板块双榜 · 点板块看成分股</h3>
+    <div id="chain-content"></div>
+    <div id="members-area"></div>
+  </div>
   <div class="filters">
     <div class="filter-item">
       <span>净利同比</span>
@@ -100,6 +106,10 @@ tr:hover{background:#f8f9fa}
       <label><input type="checkbox" id="f-industry" onchange="applyFilters()"> 行业净额&gt;0 且 行业涨跌&gt;0</label>
     </div>
     <div class="filter-item">
+      <label><input type="checkbox" id="f-topratio" onchange="applyFilters()"> 涨幅前5板块</label>
+      <label style="margin-left:10px"><input type="checkbox" id="f-topratio-pos" onchange="applyFilters()"> 净流入前5板块</label>
+    </div>
+    <div class="filter-item">
       <label><input type="checkbox" id="f-mainup" onchange="applyFilters()"> 上涨且主力净额&lt;0</label>
     </div>
     <div class="filter-item">
@@ -120,12 +130,12 @@ tr:hover{background:#f8f9fa}
           <tr id="thead-row">
             <th data-k="code">代码</th><th data-k="name">名称</th>
             <th data-k="price">最新价</th><th data-k="change">涨跌%</th>
-            <th data-k="turnover">换手%</th><th data-k="main_net">主力净额(亿)</th><th data-k="efficiency">资金效率</th><th data-k="np_yoy">净利同比%</th><th data-k="pub_date">发布日期</th>
+            <th data-k="turnover">换手%</th><th data-k="main_net">主力净额(亿)</th><th data-k="efficiency">资金效率(百万)</th><th data-k="np_yoy">净利同比%</th><th data-k="pub_date">发布日期</th>
             <th data-k="ind1">指标1</th><th data-k="ind2">指标2</th>
-            <th data-k="sector">行业</th><th data-k="ind_change">行业涨跌%</th><th data-k="ind_netin">行业净额(亿)</th>
+            <th data-k="sector">行业</th><th data-k="ind_change">行业涨跌%</th><th data-k="ind_netin">行业净额(亿)</th><th data-k="ind_ratio">行业涨跌占比</th><th data-k="ind_ratio_pos">涨跌占比(涨+净入)</th>
           </tr>
         </thead>
-        <tbody id="tbody"><tr><td colspan="14" class="loading">加载中…</td></tr></tbody>
+        <tbody id="tbody"><tr><td colspan="16" class="loading">加载中…</td></tr></tbody>
       </table>
     </div>
     <div class="pager" id="pager"></div>
@@ -146,6 +156,77 @@ function buildIndMap(){
 function indOf(s){
   if(!s.sector) return null;
   return indMap[s.sector]||null;
+}
+// 板块涨跌占比前5：ratio 降序取前5；把每个板块的产业链 Chain 命中板块也并入允许名单
+let activeMembers=null;      // 当前点选板块的成分股code集合(过滤表格用)
+let activeMemberCode='';     // 当前点选板块BK代码
+let memberCache={};          // BK代码->codes[] 本地缓存
+
+function pickRatio(x, key){
+  if(key==='ratio_pos') return x.ratio_pos;
+  return x.ratio;
+}
+
+// 双榜面板：来自后端 snap.sector_panel (涨幅前5 + 净流入前5)
+function buildSectorPanel(){
+  const panel=document.getElementById('chain-panel');
+  const box=document.getElementById('chain-content');
+  const sp=snap&&snap.sector_panel;
+  if(!sp||(!sp.by_gain.length&&!sp.by_netin.length)){panel.style.display='none';box.innerHTML='';return}
+  let html='<div style="display:flex;gap:20px;flex-wrap:wrap">';
+  html+='<div style="flex:1;min-width:240px"><b>📈 涨幅前5</b>'+renderBoard(sp.by_gain, 'up')+'</div>';
+  html+='<div style="flex:1;min-width:240px"><b>💰 净流入前5</b>'+renderBoard(sp.by_netin, 'down')+'</div>';
+  html+='</div>';
+  html+='<div style="font-size:12px;color:#999;margin-top:6px">点击板块 → 下方表格只显示该板块成分股(有K线部分)；再点一次取消</div>';
+  box.innerHTML=html;
+  panel.style.display='block';
+}
+function renderBoard(list, dir){
+  if(!list||!list.length)return '<span style="color:#999">无</span>';
+  let h='<div style="margin-top:6px">';
+  list.forEach(x=>{
+    const chg=x.change!=null?(x.change>0?'#c0392b':(x.change<0?'#27ae60':'#888')):'#888';
+    const net=x.netin!=null?fmt(x.netin,1):'-';
+    const active=activeMembers&&activeMemberCode===x.code;
+    const bg=active?'#eaf2ff':'#fff';
+    const bd=active?'#667eea':'#e5e8ec';
+    h+=`<div style="border:1px solid ${bd};background:${bg};border-radius:6px;padding:6px 10px;margin-bottom:6px;cursor:pointer" onclick="clickBoard('${x.code}','${x.name}')">
+      <b style="color:${chg}">${x.name}</b>
+      <span style="font-size:12px;color:#666">  涨跌 ${fmt(x.change,2)}% · 净额 ${net}亿 · 占比 ${x.ratio!=null?fmt(x.ratio,2):'-'}</span>
+      ${active?'<span style="float:right;color:#667eea;font-size:12px">✓ 已点选</span>':''}
+    </div>`;
+  });
+  return h+'</div>';
+}
+
+// 点板块 → 拉成分股, 表格联动过滤
+async function clickBoard(code,name){
+  const panel=document.getElementById('chain-panel');
+  const marea=document.getElementById('members-area');
+  if(activeMemberCode===code){  // 再点取消
+    activeMembers=null;activeMemberCode='';
+    marea.innerHTML='';
+    buildSectorPanel();applyFilters();
+    return;
+  }
+  activeMemberCode=code;
+  marea.innerHTML='<div style="font-size:12px;color:#667eea;margin:6px 0">拉取成分股中…</div>';
+  // 拉成分股
+  let codes=memberCache[code];
+  if(!codes){
+    try{
+      const r=await fetch('/api/sector-members?code='+encodeURIComponent(code));
+      const d=await r.json();
+      codes=d.members||[];
+      memberCache[code]=codes;
+    }catch(e){marea.innerHTML='<span style="color:#c0392b">拉取失败: '+e+'</span>';activeMembers=null;return}
+  }
+  activeMembers=new Set(codes);
+  marea.innerHTML=`<div style="font-size:12px;color:#555;margin:6px 0">已点选 <b>${name}</b>，成分股 ${codes.length} 只（表格已联动）</div>`;
+  // 渲染面板标记
+  buildSectorPanel();
+  // 联动表格
+  applyFilters();
 }
 function codeClass(code){
   const e=snap&&snap.hit_track?snap.hit_track[code]:null;
@@ -168,6 +249,8 @@ function applyFilters(){
   const ind2On=document.getElementById('f-ind2-on').checked;
   const ind2Max=parseFloat(document.getElementById('f-ind2').value);
   const indOn=document.getElementById('f-industry').checked;
+  const topOn=document.getElementById('f-topratio').checked;
+  const topPosOn=document.getElementById('f-topratio-pos').checked;
   const mainUpOn=document.getElementById('f-mainup').checked;
   const deltaOn=document.getElementById('f-delta').checked;
   const cmdOn=document.getElementById('f-cmd').checked;
@@ -181,6 +264,7 @@ function applyFilters(){
     return true;
   }
   filtered=snap.stocks.filter(s=>{
+    if(activeMembers&&!activeMembers.has(s.code))return false;   // 点选板块成分股过滤
     if(s.price==null||s.price<=0)return false;
     if(npOn&&!(s.np_yoy!=null&&s.np_yoy>=npMin))return false;
     if(ind1On&&!(s.ind1!=null&&s.ind1<=ind1Max))return false;
@@ -190,6 +274,16 @@ function applyFilters(){
       const ix=indOf(s);
       if(!ix||ix.netin==null||ix.change==null)return false;
       if(!(ix.netin>0&&ix.change>0))return false;
+    }
+    // 两个"前5"名单独立：分别构建并交集过滤。这里用两个 Set
+    if(topOn||topPosOn){
+      // 双榜名单：涨幅榜/净流入榜(来自后端 sector_panel)，按板块名匹配 s.sector
+      const sp=snap.sector_panel||{};
+      let setA=new Set(),setB=new Set();
+      if(topOn)(sp.by_gain||[]).forEach(x=>setA.add(x.name));
+      if(topPosOn)(sp.by_netin||[]).forEach(x=>setB.add(x.name));
+      if(topOn&&!setA.has(s.sector||''))return false;
+      if(topPosOn&&!setB.has(s.sector||''))return false;
     }
     if(mainUpOn&&!(s.change!=null&&s.change>0&&s.main_net!=null&&s.main_net<0))return false;
     if(deltaOn&&!(s.delta_up===true))return false;
@@ -206,6 +300,8 @@ function doSort(){
     let va=a[sortKey],vb=b[sortKey];
     if(sortKey==='ind_change'){va=indOf(a);vb=indOf(b);va=va?va.change:null;vb=vb?vb.change:null}
     if(sortKey==='ind_netin'){va=indOf(a);vb=indOf(b);va=va?va.netin:null;vb=vb?vb.netin:null}
+    if(sortKey==='ind_ratio'){va=indOf(a);vb=indOf(b);va=va?va.ratio:null;vb=vb?vb.ratio:null}
+    if(sortKey==='ind_ratio_pos'){va=indOf(a);vb=indOf(b);va=va?va.ratio_pos:null;vb=vb?vb.ratio_pos:null}
     if(va==null&&vb==null)return 0;
     if(va==null)return 1;
     if(vb==null)return -1;
@@ -241,8 +337,10 @@ function render(){
       <td>${s.sector||'-'}</td>
       <td class="${indCls}">${ix?fmt(ix.change,2):'-'}</td>
       <td class="${indNetCls}">${ix&&ix.netin!=null?fmt(ix.netin,1):'-'}</td>
+      <td class="${ix&&ix.ratio!=null?(ix.ratio>0?'positive':(ix.ratio<0?'negative':'dim')):''}">${ix&&ix.ratio!=null?fmt(ix.ratio,2):'-'}</td>
+      <td class="${ix&&ix.ratio_pos!=null?'positive':''}">${ix&&ix.ratio_pos!=null?fmt(ix.ratio_pos,2):'-'}</td>
     </tr>`}).join(''):
-    '<tr><td colspan="14" class="loading">无符合条件的股票</td></tr>';
+    '<tr><td colspan="16" class="loading">无符合条件的股票</td></tr>';
   // 分页
   const pages=Math.max(1,Math.ceil(total/PAGE));
   if(page>pages)page=pages;
@@ -260,6 +358,10 @@ function resetFilters(){
   document.getElementById('f-ind1-on').checked=false;
   document.getElementById('f-ind2-on').checked=false;
   document.getElementById('f-industry').checked=false;
+  document.getElementById('f-topratio').checked=false;
+  document.getElementById('f-topratio-pos').checked=false;
+  activeMembers=null;activeMemberCode='';memberCache={};
+  document.getElementById('members-area').innerHTML='';buildSectorPanel();
   document.getElementById('f-mainup').checked=false;
   document.getElementById('f-delta').checked=false;
   document.getElementById('f-cmd').checked=false;
@@ -288,6 +390,7 @@ async function loadSnapshot(){
     if(!r.ok)throw 0;
     snap=await r.json();
     buildIndMap();
+    buildSectorPanel();
     document.getElementById('st-total').textContent=snap.total;
     document.getElementById('st-ind').textContent=(snap.industries||[]).length;
     document.getElementById('st-kdate').textContent=snap.kline_date||'-';

@@ -1,8 +1,10 @@
 # 二进制与运行产物
 stock-scanner/stock-scanner
 stock-portfolio/stock-portfolio
+stock-select/stock-select
 stock-scanner/cache/
 stock-portfolio/cache/
+stock-select/cache/
 stock-scanner/data/
 stock-portfolio/data/
 
