@@ -15,3 +15,7 @@ stock-portfolio/data/
 # 系统文件
 .DS_Storestock-select/cache/
 stock-select/cache/
+
+# stock-flow 运行产物与敏感文件
+stock-flow/stock-flow
+stock-flow/cookie.txt

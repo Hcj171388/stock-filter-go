@@ -58,6 +58,7 @@ type SelectStock struct {
 	DeltaUp  *bool    `json:"delta_up"` // DELTA 上穿0（今日>0 且 昨日≤0，TDX CROSS 语义）
 	CmdUp    *bool    `json:"cmd_up"`   // CMDIF 上穿 CMAD（TDX CROSS 语义）
 	HH       *float64 `json:"hh"`       // HH=HHV(CC,14), CC=(C-LLV(C,N))/(HHV(C,N)-LLV(C,N)), N=SUMBARS(VOL,CAPITAL)
+	SectorAvgChange *float64 `json:"sector_avg_change"` // 成分股平均涨跌幅：该行业所有成分股涨跌幅的平均值
 }
 
 type IndustryInfo struct {
@@ -1021,6 +1022,25 @@ func scanOnce() *Snapshot {
 			Ind1: ind1, Ind2: ind2, MainNet: mainNet, Efficiency: efficiency,
 			Delta: delta, DeltaUp: deltaUp, CmdUp: cmdUp, HH: hh,
 		})
+	}
+
+	// 成分股平均涨跌幅：按行业(f100)分组，计算该行业所有成分股涨跌幅的平均值
+	// 仅基于已拉取的主板股票（约3184只），非全市场口径
+	secAvg := map[string]float64{}
+	secCnt := map[string]int{}
+	for _, s := range stocks {
+		if s.Sector == nil || s.Change == nil {
+			continue
+		}
+		secAvg[*s.Sector] += *s.Change
+		secCnt[*s.Sector]++
+	}
+	for i := range stocks {
+		if stocks[i].Sector == nil || secCnt[*stocks[i].Sector] == 0 {
+			continue
+		}
+		avg := round2(secAvg[*stocks[i].Sector] / float64(secCnt[*stocks[i].Sector]))
+		stocks[i].SectorAvgChange = &avg
 	}
 
 	hitTrack := updateHitTrack(stocks, industries, klineMap)

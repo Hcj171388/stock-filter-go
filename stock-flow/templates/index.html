@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0d1117">
+<title>板块资金动向 · Stock Flow</title>
+
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;background:#0d1117;color:#c9d1d9;font-size:14px;line-height:1.4}
+#app{display:flex;flex-direction:column;min-height:100vh;max-width:1200px;margin:0 auto;width:100%;padding:0 16px}
+
+/* ============ 控制栏 ============ */
+#controls{
+  display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;
+  padding:10px 0;font-size:12px;
+  background:#0d1117;border-bottom:1px solid #30363d;
+  position:sticky;top:0;z-index:30;
+}
+#controls label{display:inline-flex;align-items:center;gap:4px;color:#8b949e;white-space:nowrap;cursor:pointer;user-select:none;line-height:1}
+#controls input[type=checkbox]{width:14px;height:14px;margin:0;accent-color:#238636;cursor:pointer}
+#controls select{background:#21262d;color:#c9d1d9;border:1px solid #30363d;border-radius:4px;padding:2px 4px;font-size:12px}
+#controls button{background:#238636;color:#fff;border:none;border-radius:4px;padding:5px 14px;cursor:pointer;font-size:12px;font-weight:500;transition:background .15s}
+#controls button:hover{background:#2ea043}
+#controls button:active{transform:scale(.97)}
+#status{font-size:11px;color:#8b949e;margin-left:auto;white-space:nowrap}
+
+/* ============ 统计栏 ============ */
+#stats{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;padding:12px 0;border-bottom:1px solid #30363d}
+.stat{text-align:center;min-width:0}
+.stat-value{font-size:20px;font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:-.3px}
+.stat-label{font-size:11px;color:#8b949e;margin-top:3px}
+.stat-value.neg{color:#3fb950}
+.stat-value.pos{color:#f85149}
+
+/* ============ 主体：左右双榜 ============ */
+#main{display:flex;min-height:300px;min-width:0}
+.panel{flex:1;min-width:0;padding:12px 10px;border-right:1px solid #30363d}
+.panel:last-child{border-right:none}
+.panel-title{font-size:13px;font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:6px}
+.panel-title.red{color:#3fb950}
+.panel-title.green{color:#f85149}
+.panel-count{color:#8b949e;font-size:10px;font-weight:400;margin-top:6px}
+
+/* 板块条 */
+.sector-item{display:flex;align-items:center;gap:6px;padding:3px 4px;cursor:pointer;border-radius:4px;transition:background .12s;min-height:26px}
+.sector-item:hover{background:#21262d}
+.sector-item:active{background:#1f6feb33}
+.sector-item.selected{background:#1f6feb33}
+.sector-main{flex:1;min-width:0;overflow:hidden}
+.sector-name{font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sector-bar{height:4px;border-radius:2px;min-width:2px;margin-top:3px}
+.sector-bar.out{background:#3fb950}
+.sector-bar.in{background:#f85149}
+.sector-value{font-size:12px;font-weight:600;width:48px;text-align:right;flex-shrink:0;font-variant-numeric:tabular-nums}
+.sector-value.neg{color:#3fb950}
+.sector-value.pos{color:#f85149}
+
+/* ============ 数据表 ============ */
+#bottom{border-top:1px solid #30363d}
+#bottom.hidden{display:none}
+#bottom-inner{padding:12px 0;max-height:460px;overflow:auto;-webkit-overflow-scrolling:touch}
+.table-title{font-size:12px;font-weight:600;margin-bottom:8px}
+table{width:100%;border-collapse:separate;border-spacing:0;font-size:11px}
+th{text-align:right;padding:7px 8px;cursor:pointer;user-select:none;background:#21262d;color:#8b949e;font-weight:600;white-space:nowrap;position:sticky;top:0;z-index:2}
+th:first-child{text-align:left;left:0;z-index:3}
+th:hover{color:#58a6ff}
+th.sort-asc::after{content:" ▲";color:#58a6ff;font-size:9px}
+th.sort-desc::after{content:" ▼";color:#58a6ff;font-size:9px}
+td{padding:5px 8px;border-top:1px solid #21262d;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+td:first-child{text-align:left;position:sticky;left:0;background:#0d1117;z-index:1}
+tbody tr:hover td{background:#161b22}
+td.pos{color:#f85149}
+td.neg{color:#3fb950}
+td.zero{color:#8b949e}
+/* 首列固定宽度，避免名称把表格撑变形 */
+th:first-child,td:first-child{width:110px;min-width:110px;max-width:110px;overflow:hidden;text-overflow:ellipsis}
+
+/* ============ 加载遮罩 ============ */
+#loading{position:fixed;inset:0;background:rgba(13,17,23,.78);display:flex;justify-content:center;align-items:center;z-index:100;backdrop-filter:blur(2px)}
+#loading.hidden{display:none}
+#loading>div{font-size:14px;color:#c9d1d9;display:flex;align-items:center;gap:10px}
+#loading>div::before{content:"";width:16px;height:16px;border:2px solid #30363d;border-top-color:#3fb950;border-radius:50%;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ============ 平板 / 手机 ============ */
+@media (max-width:768px){
+  #app{padding:0 10px}
+  #controls{gap:8px 14px;padding:8px 0}
+  #status{flex-basis:100%;margin-left:0}
+  #stats{grid-template-columns:repeat(2,1fr);gap:8px;padding:10px 0}
+  .stat{background:#161b22;border:1px solid #21262d;border-radius:8px;padding:8px 6px}
+  .stat-value{font-size:19px}
+  .stat--time{display:none}   /* 更新时间已显示在顶部状态栏，此处不再重复占位 */
+  .panel{padding:10px 6px}
+  .sector-name{font-size:11px}
+  .sector-value{width:44px;font-size:11px}
+  #main{min-height:auto}
+  #bottom-inner{max-height:400px}
+  table{min-width:820px}      /* 触发横向滚动，12 列不再被压缩 */
+  th,td{padding:6px 7px}
+}
+@media (max-width:400px){
+  #app{padding:0 8px}
+  .sector-name{font-size:10.5px}
+  .sector-value{width:40px}
+  #controls{gap:7px 12px;font-size:11.5px}
+}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="controls">
+    <label>显示前 <select id="top-n"><option value="15">15</option><option value="25" selected>25</option><option value="40">40</option><option value="60">60</option></select> 个板块</label>
+    <label><input type="checkbox" id="show-table" checked> 显示数据表</label>
+    <label><input type="checkbox" id="auto-refresh" checked> 自动刷新</label>
+    <label><input type="checkbox" id="filter-up"> 涨跌幅＞0</label>
+    <label><input type="checkbox" id="filter-net"> 净流入＞0</label>
+    <button id="refresh-btn">立即刷新</button>
+    <span id="status"></span>
+  </div>
+
+  <div id="stats">
+    <div class="stat"><div class="stat-value" id="st-in">0</div><div class="stat-label">总流入（亿）</div></div>
+    <div class="stat"><div class="stat-value" id="st-out">0</div><div class="stat-label">总流出（亿）</div></div>
+    <div class="stat"><div class="stat-value" id="st-net">0</div><div class="stat-label">净流入（亿）</div></div>
+    <div class="stat"><div class="stat-value" id="st-count">0</div><div class="stat-label">板块数</div></div>
+    <div class="stat stat--time"><div class="stat-value" id="st-time">--:--:--</div><div class="stat-label">更新时间</div></div>
+  </div>
+
+  <div id="main">
+    <div class="panel">
+      <div class="panel-title red">资金流出 TOP</div>
+      <div id="left-list"></div>
+      <div class="panel-count" id="left-count"></div>
+    </div>
+    <div class="panel">
+      <div class="panel-title green">资金流入 TOP</div>
+      <div id="right-list"></div>
+      <div class="panel-count" id="right-count"></div>
+    </div>
+  </div>
+
+  <div id="bottom">
+    <div id="bottom-inner">
+      <div class="table-title">全板块数据 · 点击列头排序</div>
+      <table id="data-table">
+        <thead><tr>
+          <th data-key="name">板块名称</th>
+          <th data-key="net_inflow">主力净流入(亿)</th>
+          <th data-key="inflow">主力流入(亿)</th>
+          <th data-key="outflow">主力流出(亿)</th>
+          <th data-key="change_pct">涨跌幅%</th>
+          <th data-key="change_5d">5日涨幅%</th>
+          <th data-key="change_10d">10日涨幅%</th>
+          <th data-key="big_order">大单净量%</th>
+          <th data-key="efficiency">效率</th>
+          <th data-key="composite">综合涨跌%</th>
+          <th data-key="score">综合评分</th>
+          <th data-key="turnover">成交额(亿)</th>
+        </tr></thead>
+        <tbody id="table-body"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div id="loading"><div>加载中…</div></div>
+
+<script>
+// ============ 全局变量 ============
+var flowData = null;
+var sortKey = 'net_inflow';
+var sortAsc = false;
+var selectedSectorCode = null;
+var autoRefresh = true;
+var refreshTimer = null;
+var filterUp = false;
+var filterNet = false;
+
+// 获取过滤后的板块列表
+function getFilteredSectors() {
+  if (!flowData) return [];
+  var sectors = flowData.sectors;
+  if (filterUp) sectors = sectors.filter(function(s) { return s.change_pct > 0; });
+  if (filterNet) sectors = sectors.filter(function(s) { return s.net_inflow > 0; });
+  return sectors;
+}
+
+// ============ 数据加载 ============
+function loadData(silent) {
+  var statusEl = document.getElementById('status');
+  if (silent) {
+    // 无感刷新：不打扰用户，连状态栏文字也只做轻量提示
+    statusEl.textContent = '同步中...';
+  } else {
+    document.getElementById('loading').classList.remove('hidden');
+    statusEl.textContent = '加载中...';
+  }
+
+  fetch('/api/flow')
+    .then(function(resp) { return resp.json(); })
+    .then(function(data) {
+      flowData = data;
+      renderAll();
+      statusEl.textContent = '已更新 ' + flowData.generated_at;
+    })
+    .catch(function(e) {
+      statusEl.textContent = (silent ? '自动刷新失败: ' : '加载失败: ') + e.message;
+    })
+    .finally(function() {
+      // 静默刷新绝不触碰全屏 loading 遮罩，避免影响手动刷新的状态
+      if (!silent) document.getElementById('loading').classList.add('hidden');
+    });
+}
+
+// ============ 渲染 ============
+function renderAll() {
+  if (!flowData) return;
+
+  // 统计
+  var fmt = function(v) { return (v / 1e8).toFixed(1); };
+  document.getElementById('st-in').textContent = fmt(flowData.total_inflow);
+  document.getElementById('st-out').textContent = fmt(flowData.total_outflow);
+  var netEl = document.getElementById('st-net');
+  netEl.textContent = fmt(flowData.total_net);
+  netEl.parentElement.classList.toggle('neg', flowData.total_net < 0);
+  document.getElementById('st-count').textContent = getFilteredSectors().length;
+  document.getElementById('st-time').textContent = flowData.generated_at;
+
+  // 左右面板
+  renderLeftPanel(parseInt(document.getElementById('top-n').value));
+  renderRightPanel(parseInt(document.getElementById('top-n').value));
+
+  // 数据表
+  renderTable();
+}
+
+// 左侧流出面板
+function renderLeftPanel(topN) {
+  var list = document.getElementById('left-list');
+  var allSectors = getFilteredSectors();
+  var sources = allSectors.filter(function(s) { return s.net_inflow < 0 && s.outflow > 0; })
+    .sort(function(a, b) { return b.outflow - a.outflow; });
+  var nodes = sources.slice(0, topN);
+  document.getElementById('left-count').textContent = '共 ' + sources.length + ' 个流出板块';
+
+  var html = '';
+  var maxFlow = nodes.length > 0 ? nodes[0].outflow : 1;
+  for (var i = 0; i < nodes.length; i++) {
+    var n = nodes[i];
+    var pct = maxFlow > 0 ? (n.outflow / maxFlow * 100) : 0;
+    var cls = (selectedSectorCode === n.code) ? 'selected' : '';
+    var val = (n.outflow / 1e8).toFixed(1);
+    html += '<div class="sector-item ' + cls + '" onclick="selectNode(\'' + n.code + '\', \'from\')">' +
+      '<div class="sector-main">' +
+        '<div class="sector-name" title="' + n.name + '">' + n.name + '</div>' +
+        '<div class="sector-bar out" style="width:' + pct + '%"></div>' +
+      '</div>' +
+      '<div class="sector-value neg">' + val + '</div>' +
+    '</div>';
+  }
+  list.innerHTML = html;
+}
+
+// 右侧流入面板
+function renderRightPanel(topN) {
+  var list = document.getElementById('right-list');
+  var allSectors = getFilteredSectors();
+  var sinks = allSectors.filter(function(s) { return s.net_inflow > 0 && s.inflow > 0; })
+    .sort(function(a, b) { return b.inflow - a.inflow; });
+  var nodes = sinks.slice(0, topN);
+  document.getElementById('right-count').textContent = '共 ' + sinks.length + ' 个流入板块';
+
+  var html = '';
+  var maxFlow = nodes.length > 0 ? nodes[0].inflow : 1;
+  for (var i = 0; i < nodes.length; i++) {
+    var n = nodes[i];
+    var pct = maxFlow > 0 ? (n.inflow / maxFlow * 100) : 0;
+    var cls = (selectedSectorCode === n.code) ? 'selected' : '';
+    var val = (n.inflow / 1e8).toFixed(1);
+    html += '<div class="sector-item ' + cls + '" onclick="selectNode(\'' + n.code + '\', \'to\')">' +
+      '<div class="sector-main">' +
+        '<div class="sector-name" title="' + n.name + '">' + n.name + '</div>' +
+        '<div class="sector-bar in" style="width:' + pct + '%"></div>' +
+      '</div>' +
+      '<div class="sector-value pos">' + val + '</div>' +
+    '</div>';
+  }
+  list.innerHTML = html;
+}
+
+// 数据表
+function renderTable() {
+  var sectors = getFilteredSectors().slice();
+  sectors.sort(function(a, b) {
+    var va = a[sortKey], vb = b[sortKey];
+    if (va == null) va = 0;
+    if (vb == null) vb = 0;
+    return sortAsc ? va - vb : vb - va;
+  });
+
+  var fmt = function(v) { return v == null ? '-' : (v / 1e8).toFixed(1); };
+  var fmtPct = function(v) { return v == null ? '-' : v.toFixed(2); };
+  var fmtEff = function(v) { return v == null ? '-' : v.toFixed(2); };
+
+  var html = '';
+  for (var i = 0; i < sectors.length; i++) {
+    var s = sectors[i];
+    var cls = s.net_inflow > 0 ? 'pos' : s.net_inflow < 0 ? 'neg' : 'zero';
+    var rowCls = (selectedSectorCode === s.code) ? 'style="background:#161b22"' : '';
+    var clickHandler = "selectNode('" + s.code + "', " +
+      (s.net_inflow < 0 ? "'from'" : "'to'") + ')';
+
+    html += '<tr ' + rowCls + ' onclick="' + clickHandler + '">' +
+      '<td title="' + s.name + '">' + s.name + '</td>' +
+      '<td class="' + cls + '">' + fmt(s.net_inflow) + '</td>' +
+      '<td class="pos">' + fmt(s.inflow) + '</td>' +
+      '<td class="neg">' + fmt(s.outflow) + '</td>' +
+      '<td class="' + (s.change_pct > 0 ? 'pos' : s.change_pct < 0 ? 'neg' : '') + '">' + fmtPct(s.change_pct) + '</td>' +
+      '<td class="' + (s.change_5d > 0 ? 'pos' : s.change_5d < 0 ? 'neg' : '') + '">' + fmtPct(s.change_5d) + '</td>' +
+      '<td class="' + (s.change_10d > 0 ? 'pos' : s.change_10d < 0 ? 'neg' : '') + '">' + fmtPct(s.change_10d) + '</td>' +
+      '<td class="' + (s.big_order > 0 ? 'pos' : s.big_order < 0 ? 'neg' : '') + '">' + fmtPct(s.big_order) + '</td>' +
+      '<td class="' + (s.efficiency > 0 ? 'pos' : s.efficiency < 0 ? 'neg' : '') + '">' + fmtEff(s.efficiency) + '</td>' +
+      '<td class="' + (s.composite > 0 ? 'pos' : s.composite < 0 ? 'neg' : '') + '">' + fmtPct(s.composite) + '</td>' +
+      '<td class="' + (s.score > 0 ? 'pos' : s.score < 0 ? 'neg' : '') + '">' + fmtEff(s.score) + '</td>' +
+      '<td>' + fmt(s.turnover) + '</td>' +
+    '</tr>';
+  }
+  var sc = document.getElementById('bottom-inner');
+  var savedLeft = sc ? sc.scrollLeft : 0;
+  document.getElementById('table-body').innerHTML = html;
+  if (sc) sc.scrollLeft = savedLeft;
+
+  // 排序指示箭头
+  document.querySelectorAll('#data-table th').forEach(function(th) {
+    th.classList.remove('sort-asc', 'sort-desc');
+    if (th.getAttribute('data-key') === sortKey) {
+      th.classList.add(sortAsc ? 'sort-asc' : 'sort-desc');
+    }
+  });
+}
+
+// 排序
+function doSort(key) {
+  if (sortKey === key) {
+    sortAsc = !sortAsc;
+  } else {
+    sortKey = key;
+    sortAsc = false;
+  }
+  renderTable();
+}
+
+// 选择节点
+function selectNode(code, direction) {
+  if (selectedSectorCode === code) {
+    selectedSectorCode = null;
+  } else {
+    selectedSectorCode = code;
+  }
+  renderAll();
+}
+
+// ============ 事件绑定 ============
+document.getElementById('top-n').addEventListener('change', renderAll);
+document.getElementById('show-table').addEventListener('change', function() {
+  document.getElementById('bottom').classList.toggle('hidden', !this.checked);
+});
+document.getElementById('auto-refresh').addEventListener('change', function() {
+    autoRefresh = this.checked;
+    if (autoRefresh) startAutoRefresh();
+    else if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
+  });
+  document.getElementById('filter-up').addEventListener('change', function() {
+    filterUp = this.checked;
+    renderAll();
+  });
+  document.getElementById('filter-net').addEventListener('change', function() {
+    filterNet = this.checked;
+    renderAll();
+  });
+document.getElementById('refresh-btn').addEventListener('click', loadData);
+
+document.querySelectorAll('#data-table th').forEach(function(th) {
+  th.addEventListener('click', function() {
+    var key = th.getAttribute('data-key');
+    if (key) doSort(key);
+  });
+});
+
+// 自动刷新
+function startAutoRefresh() {
+  if (refreshTimer) clearInterval(refreshTimer);
+  refreshTimer = setInterval(function() {
+    if (autoRefresh) loadData(true);
+  }, 30000);
+}
+
+// 初始化
+loadData();
+startAutoRefresh();
+</script>
+</body>
+</html>

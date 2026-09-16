@@ -98,6 +98,12 @@ tr:hover{background:#f8f9fa}
       </div>
     </div>
     <div class="filter-item">
+      <span>涨跌幅</span>
+      <div class="seg" id="f-change">
+        <button data-v="" class="on">全部</button><button data-v="gt0">&gt;0</button><button data-v="lt0">&lt;0</button>
+      </div>
+    </div>
+    <div class="filter-item">
       <span>指标2≤</span>
       <input type="number" id="f-ind2" value="2" style="width:40px">
       <input type="checkbox" id="f-ind2-on" onchange="applyFilters()">
@@ -121,6 +127,9 @@ tr:hover{background:#f8f9fa}
     <div class="filter-item">
       <label><input type="checkbox" id="f-hh" onchange="applyFilters()"> HH&lt;0.2</label>
     </div>
+    <div class="filter-item">
+      <label title="该行业成分股平均涨跌幅 &gt; 板块整体涨跌幅(东财加权f3)，即小板股强于行业均值" style="cursor:help"><input type="checkbox" id="f-seccompare" onchange="applyFilters()"> 成分股平均涨跌&gt;行业涨幅</label>
+    </div>
     <button class="reset-btn" onclick="resetFilters()">重置</button>
   </div>
   <div class="stock-table">
@@ -132,10 +141,10 @@ tr:hover{background:#f8f9fa}
             <th data-k="price">最新价</th><th data-k="change">涨跌%</th>
             <th data-k="turnover">换手%</th><th data-k="main_net">主力净额(亿)</th><th data-k="efficiency">资金效率(百万)</th><th data-k="np_yoy">净利同比%</th><th data-k="pub_date">发布日期</th>
             <th data-k="ind1">指标1</th><th data-k="ind2">指标2</th>
-            <th data-k="sector">行业</th><th data-k="ind_change">行业涨跌%</th><th data-k="ind_netin">行业净额(亿)</th><th data-k="ind_ratio">行业涨跌占比</th><th data-k="ind_ratio_pos">涨跌占比(涨+净入)</th>
+            <th data-k="sector">行业</th><th data-k="ind_change">行业涨跌%</th><th data-k="ind_netin">行业净额(亿)</th><th data-k="ind_ratio">行业涨跌占比</th><th data-k="ind_ratio_pos">涨跌占比(涨+净入)</th><th data-k="sec_avg">成分股平均涨跌%
           </tr>
         </thead>
-        <tbody id="tbody"><tr><td colspan="16" class="loading">加载中…</td></tr></tbody>
+        <tbody id="tbody"><tr><td colspan="17" class="loading">加载中…</td></tr></tbody>
       </table>
     </div>
     <div class="pager" id="pager"></div>
@@ -246,6 +255,7 @@ function applyFilters(){
   const ind1On=document.getElementById('f-ind1-on').checked;
   const ind1Max=parseFloat(document.getElementById('f-ind1').value)||-7;
   const priceV=document.querySelector('#f-price .on').dataset.v;
+  const changeV=document.querySelector('#f-change .on').dataset.v;
   const ind2On=document.getElementById('f-ind2-on').checked;
   const ind2Max=parseFloat(document.getElementById('f-ind2').value);
   const indOn=document.getElementById('f-industry').checked;
@@ -255,6 +265,7 @@ function applyFilters(){
   const deltaOn=document.getElementById('f-delta').checked;
   const cmdOn=document.getElementById('f-cmd').checked;
   const hhOn=document.getElementById('f-hh').checked;
+  const secCmpOn=document.getElementById('f-seccompare').checked;
 
   function priceOk(p){
     if(priceV==='gt2')return p>2;
@@ -269,6 +280,8 @@ function applyFilters(){
     if(npOn&&!(s.np_yoy!=null&&s.np_yoy>=npMin))return false;
     if(ind1On&&!(s.ind1!=null&&s.ind1<=ind1Max))return false;
     if(!priceOk(s.price))return false;
+    if(changeV==='gt0'&&!(s.change!=null&&s.change>0))return false;
+    if(changeV==='lt0'&&!(s.change!=null&&s.change<0))return false;
     if(ind2On&&!(s.ind2!=null&&s.ind2<=ind2Max))return false;
     if(indOn){
       const ix=indOf(s);
@@ -289,6 +302,11 @@ function applyFilters(){
     if(deltaOn&&!(s.delta_up===true))return false;
     if(cmdOn&&!(s.cmd_up===true))return false;
     if(hhOn&&!(s.hh!=null&&s.hh<0.2))return false;
+    if(secCmpOn){
+      const ix=indOf(s);
+      if(ix==null||ix.change==null||s.sector_avg_change==null)return false;
+      if(!(s.sector_avg_change>ix.change))return false;
+    }
     return true;
   });
   doSort();
@@ -302,6 +320,7 @@ function doSort(){
     if(sortKey==='ind_netin'){va=indOf(a);vb=indOf(b);va=va?va.netin:null;vb=vb?vb.netin:null}
     if(sortKey==='ind_ratio'){va=indOf(a);vb=indOf(b);va=va?va.ratio:null;vb=vb?vb.ratio:null}
     if(sortKey==='ind_ratio_pos'){va=indOf(a);vb=indOf(b);va=va?va.ratio_pos:null;vb=vb?vb.ratio_pos:null}
+    if(sortKey==='sec_avg'){va=a.sector_avg_change;vb=b.sector_avg_change}
     if(va==null&&vb==null)return 0;
     if(va==null)return 1;
     if(vb==null)return -1;
@@ -339,8 +358,9 @@ function render(){
       <td class="${indNetCls}">${ix&&ix.netin!=null?fmt(ix.netin,1):'-'}</td>
       <td class="${ix&&ix.ratio!=null?(ix.ratio>0?'positive':(ix.ratio<0?'negative':'dim')):''}">${ix&&ix.ratio!=null?fmt(ix.ratio,2):'-'}</td>
       <td class="${ix&&ix.ratio_pos!=null?'positive':''}">${ix&&ix.ratio_pos!=null?fmt(ix.ratio_pos,2):'-'}</td>
+      <td class="${s.sector_avg_change!=null?(s.sector_avg_change>0?'positive':(s.sector_avg_change<0?'negative':'dim')):''}">${s.sector_avg_change==null?'-':(s.sector_avg_change>0?'+':'')+fmt(s.sector_avg_change,2)}</td>
     </tr>`}).join(''):
-    '<tr><td colspan="16" class="loading">无符合条件的股票</td></tr>';
+    '<tr><td colspan="17" class="loading">无符合条件的股票</td></tr>';
   // 分页
   const pages=Math.max(1,Math.ceil(total/PAGE));
   if(page>pages)page=pages;
@@ -366,12 +386,18 @@ function resetFilters(){
   document.getElementById('f-delta').checked=false;
   document.getElementById('f-cmd').checked=false;
   document.getElementById('f-hh').checked=false;
+  document.getElementById('f-seccompare').checked=false;
   document.querySelectorAll('#f-price button').forEach(b=>b.classList.toggle('on',b.dataset.v===''));
+  document.querySelectorAll('#f-change button').forEach(b=>b.classList.toggle('on',b.dataset.v===''));
   applyFilters();
 }
 document.querySelectorAll('#f-price button').forEach(b=>b.addEventListener('click',()=>{
-  document.querySelectorAll('#f-price button').forEach(x=>x.classList.remove('on'));
-  b.classList.add('on');applyFilters();
+    document.querySelectorAll('#f-price button').forEach(x=>x.classList.remove('on'));
+    b.classList.add('on');applyFilters();
+}));
+document.querySelectorAll('#f-change button').forEach(b=>b.addEventListener('click',()=>{
+    document.querySelectorAll('#f-change button').forEach(x=>x.classList.remove('on'));
+    b.classList.add('on');applyFilters();
 }));
 document.querySelectorAll('#thead-row th').forEach(th=>th.addEventListener('click',()=>{
   const k=th.dataset.k;
@@ -398,7 +424,7 @@ async function loadSnapshot(){
     document.getElementById('cacheinfo').textContent='数据源：东方财富(行情/财务/行业) + 腾讯(日K线) · 默认无筛选=全部数据 · 指标1=MA(合一,10) · 指标2=SUM(X>0,7)';
     applyFilters();
   }catch(e){
-    document.getElementById('tbody').innerHTML='<tr><td colspan="13" class="loading">数据加载中或暂无（首轮扫描未完成），30秒后自动重试</td></tr>';
+    document.getElementById('tbody').innerHTML='<tr><td colspan="17" class="loading">数据加载中或暂无（首轮扫描未完成），30秒后自动重试</td></tr>';
     setTimeout(loadSnapshot,30000);
   }
 }
