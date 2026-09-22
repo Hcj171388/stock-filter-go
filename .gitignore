@@ -13,7 +13,9 @@ stock-portfolio/data/
 *.old.*
 
 # 系统文件
-.DS_Storestock-select/cache/
+.DS_Store
+
+# stock-select 缓存与临时产物
 stock-select/cache/
 
 # stock-flow 运行产物与敏感文件
@@ -24,3 +26,6 @@ stock-flow/cookie.txt
 stock-select/*.bak
 stock-select/*.bak-*
 stock-select/*.new
+env
+stock-select/env
+.env

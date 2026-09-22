@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -121,6 +122,64 @@ func topSectorsDual() (*ChainPanel, error) {
 	if p, ok := sectorPanelCache(); ok {
 		return p, nil
 	}
+	// B-1: 板块榜切 10jqka DataQ (industry_l1 90个, 一次取涨跌幅+主力净流入)
+	// 东财 clist 挂了也能出；板块名用同花顺行业名，筛选走"成分股集合"过滤(见 sectorMembers/fuyao)
+	rows, err := fetchDataqSectors()
+	if err != nil {
+		log.Printf("[sector] DataQ 板块榜拉取失败: %v (回退东财)", err)
+		return fallbackSectorsEastmoney()
+	}
+	byGain := make([]SectorBoard, 0, TOP_PANEL_N)
+	byNetIn := make([]SectorBoard, 0, TOP_PANEL_N)
+	// 按涨跌幅降序
+	for _, r := range rows {
+		if r.Change == nil {
+			continue
+		}
+		sb := SectorBoard{Code: dataqToThscode(r.Code), Name: r.Name, Change: r.Change, NetIn: r.NetIn}
+		if len(byGain) < TOP_PANEL_N {
+			byGain = append(byGain, sb)
+		}
+	}
+	// 按主力净流入降序（只保留 >0）
+	sorted := make([]dataqSectorRow, len(rows))
+	copy(sorted, rows)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		a, b := sorted[i].NetIn, sorted[j].NetIn
+		if a == nil || b == nil {
+			return a != nil
+		}
+		return *a > *b
+	})
+	for _, r := range sorted {
+		if r.NetIn == nil || *r.NetIn <= 0 {
+			break
+		}
+		sb := SectorBoard{Code: dataqToThscode(r.Code), Name: r.Name, Change: r.Change, NetIn: r.NetIn}
+		if len(byNetIn) < TOP_PANEL_N {
+			byNetIn = append(byNetIn, sb)
+		}
+	}
+	// 占比
+	for i := range byGain {
+		r := sectorRatio(byGain[i])
+		byGain[i].Ratio = r
+	}
+	for i := range byNetIn {
+		r := sectorRatio(byNetIn[i])
+		byNetIn[i].Ratio = r
+	}
+	if len(byGain) == 0 && len(byNetIn) == 0 {
+		// DataQ 没出数据，回退东财
+		return fallbackSectorsEastmoney()
+	}
+	p := &ChainPanel{ByGain: byGain, ByNetIn: byNetIn, TTL: SECTORS_TTL_SEC, Generated: time.Now().Unix()}
+	stocklib.CacheWriteJSON(sectorsCacheFile, p)
+	return p, nil
+}
+
+// fallbackSectorsEastmoney 东财旧实现（回退用，东财恢复时自愈）
+func fallbackSectorsEastmoney() (*ChainPanel, error) {
 	byGain := make([]SectorBoard, 0, TOP_PANEL_N)
 	byNetIn := make([]SectorBoard, 0, TOP_PANEL_N)
 	for _, sortKey := range []string{"f3", "f62"} {
@@ -131,7 +190,7 @@ func topSectorsDual() (*ChainPanel, error) {
 				"fs": INDUSTRY_FS, "fields": "f12,f14,f3,f62",
 			})
 			if err != nil {
-				log.Printf("[sector] 板块榜第%d页失败(fid=%s): %v", pn, sortKey, err)
+				log.Printf("[sector] 东财板块榜第%d页失败(fid=%s): %v", pn, sortKey, err)
 				break
 			}
 			for _, it := range data.Data.Diff {
@@ -157,7 +216,7 @@ func topSectorsDual() (*ChainPanel, error) {
 						byGain = append(byGain, sb)
 					}
 				} else {
-					// 净流入榜：只保留净额>0
+	// 净流入榜：只保留净额>0
 					if sb.NetIn != nil && *sb.NetIn > 0 && len(byNetIn) < TOP_PANEL_N {
 						byNetIn = append(byNetIn, sb)
 					}
@@ -168,7 +227,6 @@ func topSectorsDual() (*ChainPanel, error) {
 			}
 		}
 	}
-	// 占比
 	for i := range byGain {
 		r := sectorRatio(byGain[i])
 		byGain[i].Ratio = r
@@ -194,7 +252,8 @@ func sectorRatio(sb SectorBoard) *float64 {
 	return &r
 }
 
-// 板块成分股：按 b:BK代码 拉（pz=500），磁盘缓存 5 分钟
+// 板块成分股：B-1 走扶摇（同花顺行业指数成分股），code 为 thscode 如 "881164.TI"
+// 东财 code(BKxxxx) 也兼容：直接按 thscode 查；磁盘缓存 30 分钟
 func sectorMembers(code string) []string {
 	if code == "" {
 		return nil
@@ -210,6 +269,24 @@ func sectorMembers(code string) []string {
 			return c.Codes
 		}
 	}
+	// 扶摇查成分股（thscode 形如 881164.TI）
+	thscode := code
+	if len(thscode) == 8 && !strings.HasSuffix(thscode, ".TI") {
+		// 兼容纯 8 位 code（如 881164）补 .TI 后缀
+		thscode = thscode + ".TI"
+	}
+	codes, err := fuyaoMembers(thscode)
+	if err != nil {
+		log.Printf("[members] %s 扶摇拉取失败: %v (回退东财 b:)", thscode, err)
+		return fallbackMembersEastmoney(code)
+	}
+	c = mcache{Codes: codes, T: time.Now().Unix()}
+	stocklib.CacheWriteJSON(fname, &c)
+	return codes
+}
+
+// fallbackMembersEastmoney 东财旧实现（回退用）
+func fallbackMembersEastmoney(code string) []string {
 	var codes []string
 	for pn := 1; pn <= 5; pn++ {
 		data, err := stocklib.FetchEM(map[string]string{
@@ -217,7 +294,7 @@ func sectorMembers(code string) []string {
 			"fs": "b:" + code, "fields": "f12,f14",
 		})
 		if err != nil {
-			log.Printf("[members] %s 第%d页失败: %v", code, pn, err)
+			log.Printf("[members] 东财 %s 第%d页失败: %v", code, pn, err)
 			break
 		}
 		for _, it := range data.Data.Diff {
@@ -229,7 +306,5 @@ func sectorMembers(code string) []string {
 			break
 		}
 	}
-	c = mcache{Codes: codes, T: time.Now().Unix()}
-	stocklib.CacheWriteJSON(fname, &c)
 	return codes
 }

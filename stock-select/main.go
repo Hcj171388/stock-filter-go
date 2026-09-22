@@ -31,7 +31,7 @@ const (
 	MAIN_BOARD_FS  = "m:0+t:6,m:1+t:2" // 沪深主板（x2 同款口径，不含科创/京/创业板）
 	INDUSTRY_FS    = "m:90+t:2"       // 东财行业板块
 	TOP_PANEL_N    = 5          // 产业链面板前N(涨幅榜/净流入榜各取N)
-	SECTORS_TTL_SEC= 300        // 板块榜缓存有效期(秒)
+	SECTORS_TTL_SEC = 1800       // 板块榜缓存有效期(秒) = 30 分钟（B-1 切 DataQ+扶摇后，板块成分股变动慢，拉长到 30min）
 	KLINE_BATCH    = 200
 	KLINE_DAYS     = 300
 	KLINE_WORKERS  = 8
@@ -95,13 +95,15 @@ type Snapshot struct {
 	Stocks      []SelectStock    `json:"stocks"`
 	SectorPanel *ChainPanel      `json:"sector_panel"`
 	HitTrack    map[string]*HitEntry `json:"hit_track"`
+	EMDegraded  bool             `json:"em_degraded"` // 本轮东财行情不可用，主力净额/行业名为降级兜底
 }
 
 var (
-	snapMu   sync.RWMutex
-	latest   *Snapshot
-	scanMu   sync.Mutex
-	scanning bool
+	snapMu     sync.RWMutex
+	latest     *Snapshot
+	scanMu     sync.Mutex
+	scanning   bool
+	emDegraded bool // 本轮东财行情源不可用 → 主力净额 f62 / 行业名 f100 降级
 )
 
 func init() { os.MkdirAll(CACHE_DIR, 0755) }
@@ -1043,12 +1045,20 @@ func scanOnce() *Snapshot {
 
 	boardRows := fetchMainBoard()
 	if len(boardRows) == 0 {
-		log.Printf("[scan] 主板列表为空，跳过本轮")
+		// 东财 clist 挂 → 整轮读最后一次缓存（板块榜/成分股单独走 DataQ/扶摇刷新，见下方）
+		log.Printf("[scan] 东财主板列表为空，整轮读缓存 + 板块榜走DataQ/扶摇")
 		snapMu.RLock()
 		s := latest
 		snapMu.RUnlock()
+		if s != nil {
+			// 仅刷新板块榜（板块榜本来就东财挂了，读缓存的板块榜是空的没意义，必须走 DataQ/扶摇）
+			if p, err := topSectorsDual(); err == nil && p != nil {
+				s.SectorPanel = p
+			}
+		}
 		return s
 	}
+	emDegraded = false
 	symbols := make([]string, 0, len(boardRows))
 	for _, it := range boardRows {
 		code := cleanCode(it["f12"])
@@ -1167,12 +1177,13 @@ func scanOnce() *Snapshot {
 	snap := &Snapshot{
 		GeneratedAt: time.Now().Format("2006-01-02 15:04:05"),
 		SectorPanel: sectorPanel,
-		ElapsedSec:   round2(time.Since(start).Seconds()),
-		Total:        len(stocks),
-		KlineDate:    klineDate,
-		Industries:   industries,
-		Stocks:       stocks,
-		HitTrack:     hitTrack,
+		ElapsedSec:  round2(time.Since(start).Seconds()),
+		Total:       len(stocks),
+		KlineDate:   klineDate,
+		Industries:  industries,
+		Stocks:      stocks,
+		HitTrack:    hitTrack,
+		EMDegraded:  emDegraded,
 	}
 	if err := stocklib.CacheWriteJSON(cachePath(), snap); err != nil {
 		log.Printf("[scan] 缓存写入失败: %v", err)

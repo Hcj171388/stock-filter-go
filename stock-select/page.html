@@ -171,8 +171,41 @@ function indOf(s){
 }
 // 板块涨跌占比前5：ratio 降序取前5；把每个板块的产业链 Chain 命中板块也并入允许名单
 let activeMembers=null;      // 当前点选板块的成分股code集合(过滤表格用)
-let activeMemberCode='';     // 当前点选板块BK代码
-let memberCache={};          // BK代码->codes[] 本地缓存
+let activeMemberCode='';     // 当前点选板块thscode
+let memberCache={};          // 板块code(88xxxx.TI) -> codes[] 本地缓存
+let topMembersCache={};      // 板块code -> codes[] (前5筛选用, 独立于点选)
+
+// B-1: 前5板块筛选用"成分股集合"过滤(不依赖 s.sector 行业名匹配)
+// 勾选筛选时后端一次性下发 by_gain/by_netin 的成分股代码集合
+let topGainSet=null, topNetSet=null;
+function ensureTopSets(sp){
+  if(!sp) return;
+  const g=sp.by_gain||[], n=sp.by_netin||[];
+  if(topGainSet===null && g.length){
+    topGainSet=new Set();
+    g.forEach(b=>{ (topMembersCache[b.code]||[]).forEach(c=>topGainSet.add(c)); });
+  }
+  if(topNetSet===null && n.length){
+    topNetSet=new Set();
+    n.forEach(b=>{ (topMembersCache[b.code]||[]).forEach(c=>topNetSet.add(c)); });
+  }
+}
+async function prefetchTopMembers(sp){
+  // 拉取前5板块的成分股, 存 topMembersCache, 供筛选使用
+  if(!sp) return;
+  const seen=new Set();
+  for(const b of [...(sp.by_gain||[]),...(sp.by_netin||[])]){
+    if(seen.has(b.code)) continue; seen.add(b.code);
+    if(!topMembersCache[b.code]){
+      try{
+        const r=await fetch('/api/sector-members?code='+encodeURIComponent(b.code));
+        const d=await r.json();
+        topMembersCache[b.code]=d.members||[];
+      }catch(e){ topMembersCache[b.code]=[]; }
+    }
+  }
+  topGainSet=null; topNetSet=null; // 清空让 ensureTopSets 重建
+}
 
 function pickRatio(x, key){
   if(key==='ratio_pos') return x.ratio_pos;
@@ -293,15 +326,20 @@ function applyFilters(){
       if(!ix||ix.netin==null||ix.change==null)return false;
       if(!(ix.netin>0&&ix.change>0))return false;
     }
-    // 两个"前5"名单独立：分别构建并交集过滤。这里用两个 Set
+    // B-1 A方案: 前5板块筛选自动叠加"必须有K线数据"条件，东财挂时滤掉无K线的旧股
     if(topOn||topPosOn){
-      // 双榜名单：涨幅榜/净流入榜(来自后端 sector_panel)，按板块名匹配 s.sector
       const sp=snap.sector_panel||{};
-      let setA=new Set(),setB=new Set();
-      if(topOn)(sp.by_gain||[]).forEach(x=>setA.add(x.name));
-      if(topPosOn)(sp.by_netin||[]).forEach(x=>setB.add(x.name));
-      if(topOn&&!setA.has(s.sector||''))return false;
-      if(topPosOn&&!setB.has(s.sector||''))return false;
+      ensureTopSets(sp);
+      if(topOn){
+        if(topGainSet===null){ return false; }
+        if(!topGainSet.has(s.code)) return false;
+        if(s.ind1==null) return false; // 无K线数据
+      }
+      if(topPosOn){
+        if(topNetSet===null){ return false; }
+        if(!topNetSet.has(s.code)) return false;
+        if(s.ind1==null) return false;
+      }
     }
     if(mainUpOn&&!(s.change!=null&&s.change>0&&s.main_net!=null&&s.main_net<0))return false;
     if(deltaOn&&!(s.delta_up===true))return false;
@@ -387,7 +425,7 @@ function resetFilters(){
   document.getElementById('f-industry').checked=false;
   document.getElementById('f-topratio').checked=false;
   document.getElementById('f-topratio-pos').checked=false;
-  activeMembers=null;activeMemberCode='';memberCache={};
+  activeMembers=null;activeMemberCode='';memberCache={};topMembersCache={};topGainSet=null;topNetSet=null;
   document.getElementById('members-area').innerHTML='';buildSectorPanel();
   document.getElementById('f-mainup').checked=false;
   document.getElementById('f-delta').checked=false;
@@ -429,8 +467,10 @@ async function loadSnapshot(){
     document.getElementById('st-ind').textContent=(snap.industries||[]).length;
     document.getElementById('st-kdate').textContent=snap.kline_date||'-';
     document.getElementById('updatetime').textContent='数据更新：'+snap.generated_at+' · 耗时'+snap.elapsed_sec+'s';
-    document.getElementById('cacheinfo').textContent='数据源：东方财富(行情/财务/行业) + 腾讯(日K线) · 默认无筛选=全部数据 · 指标1=MA(合一,10) · 指标2=SUM(X>0,7)';
+    document.getElementById('cacheinfo').textContent='数据源：同花顺(DataQ板块榜/扶摇成分股) + 东方财富(行情/财务/行业) + 腾讯(日K线) · 默认无筛选=全部数据';
     applyFilters();
+    // B-1: 预取前5板块成分股(涨幅榜+净流入榜), 供"前5板块"筛选用"成分股集合"过滤
+    prefetchTopMembers(snap.sector_panel).then(()=>{ if(document.getElementById('f-topratio').checked||document.getElementById('f-topratio-pos').checked){applyFilters();} });
   }catch(e){
     document.getElementById('tbody').innerHTML='<tr><td colspan="18" class="loading">数据加载中或暂无（首轮扫描未完成），30秒后自动重试</td></tr>';
     setTimeout(loadSnapshot,30000);
