@@ -19,3 +19,8 @@ stock-select/cache/
 # stock-flow 运行产物与敏感文件
 stock-flow/stock-flow
 stock-flow/cookie.txt
+
+# stock-select 备份与临时构建产物
+stock-select/*.bak
+stock-select/*.bak-*
+stock-select/*.new

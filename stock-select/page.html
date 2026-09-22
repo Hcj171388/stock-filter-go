@@ -128,6 +128,9 @@ tr:hover{background:#f8f9fa}
       <label><input type="checkbox" id="f-hh" onchange="applyFilters()"> HH&lt;0.2</label>
     </div>
     <div class="filter-item">
+      <label>综合水位&lt;<input type="number" id="f-water" value="20" min="0" max="100" step="1" style="width:52px;padding:2px 4px" onchange="applyFilters()" oninput="applyFilters()"> <span title="容器水位原理-动态权重：6周期(5/9/14/20/30/60)HHV/LLV水位加权(0~100)，阈值默认20，清空=不限" style="cursor:help">ⓘ</span></label>
+    </div>
+    <div class="filter-item">
       <label title="该行业成分股平均涨跌幅 &gt; 板块整体涨跌幅(东财加权f3)，即小板股强于行业均值" style="cursor:help"><input type="checkbox" id="f-seccompare" onchange="applyFilters()"> 成分股平均涨跌&gt;行业涨幅</label>
     </div>
     <button class="reset-btn" onclick="resetFilters()">重置</button>
@@ -139,12 +142,12 @@ tr:hover{background:#f8f9fa}
           <tr id="thead-row">
             <th data-k="code">代码</th><th data-k="name">名称</th>
             <th data-k="price">最新价</th><th data-k="change">涨跌%</th>
-            <th data-k="turnover">换手%</th><th data-k="main_net">主力净额(亿)</th><th data-k="efficiency">资金效率(百万)</th><th data-k="np_yoy">净利同比%</th><th data-k="pub_date">发布日期</th>
+            <th data-k="turnover">换手%</th><th data-k="main_net">主力净额(亿)</th><th data-k="efficiency">资金效率(百万)</th><th data-k="water">综合水位</th><th data-k="np_yoy">净利同比%</th><th data-k="pub_date">发布日期</th>
             <th data-k="ind1">指标1</th><th data-k="ind2">指标2</th>
             <th data-k="sector">行业</th><th data-k="ind_change">行业涨跌%</th><th data-k="ind_netin">行业净额(亿)</th><th data-k="ind_ratio">行业涨跌占比</th><th data-k="ind_ratio_pos">涨跌占比(涨+净入)</th><th data-k="sec_avg">成分股平均涨跌%
           </tr>
         </thead>
-        <tbody id="tbody"><tr><td colspan="17" class="loading">加载中…</td></tr></tbody>
+        <tbody id="tbody"><tr><td colspan="18" class="loading">加载中…</td></tr></tbody>
       </table>
     </div>
     <div class="pager" id="pager"></div>
@@ -265,6 +268,8 @@ function applyFilters(){
   const deltaOn=document.getElementById('f-delta').checked;
   const cmdOn=document.getElementById('f-cmd').checked;
   const hhOn=document.getElementById('f-hh').checked;
+  const waterThRaw=document.getElementById('f-water').value;
+  const waterTh=waterThRaw===''?null:parseFloat(waterThRaw);
   const secCmpOn=document.getElementById('f-seccompare').checked;
 
   function priceOk(p){
@@ -302,6 +307,7 @@ function applyFilters(){
     if(deltaOn&&!(s.delta_up===true))return false;
     if(cmdOn&&!(s.cmd_up===true))return false;
     if(hhOn&&!(s.hh!=null&&s.hh<0.2))return false;
+    if(waterTh!=null&&!(s.water!=null&&s.water<waterTh))return false;
     if(secCmpOn){
       const ix=indOf(s);
       if(ix==null||ix.change==null||s.sector_avg_change==null)return false;
@@ -349,6 +355,7 @@ function render(){
       <td>${fmt(s.turnover,2)}</td>
       <td class="${s.main_net!=null?(s.main_net>0?'positive':(s.main_net<0?'negative':'dim')):''}">${s.main_net==null?'-':fmt(s.main_net,1)}</td>
       <td class="${s.efficiency!=null?(s.efficiency>0?'positive':(s.efficiency<0?'negative':'dim')):''}">${s.efficiency==null?'-':fmt(s.efficiency,2)}</td>
+      <td class="${s.water!=null?(s.water<20?'positive':''):(s.water!=null?'dim':'')}">${s.water==null?'-':fmt(s.water,1)}</td>
       <td class="${npCls}">${s.np_yoy==null?'-':fmt(s.np_yoy,1)}</td>
       <td>${s.pub_date||'-'}</td>
       <td class="${ind1Cls}">${fmt(s.ind1,2)}</td>
@@ -360,7 +367,7 @@ function render(){
       <td class="${ix&&ix.ratio_pos!=null?'positive':''}">${ix&&ix.ratio_pos!=null?fmt(ix.ratio_pos,2):'-'}</td>
       <td class="${s.sector_avg_change!=null?(s.sector_avg_change>0?'positive':(s.sector_avg_change<0?'negative':'dim')):''}">${s.sector_avg_change==null?'-':(s.sector_avg_change>0?'+':'')+fmt(s.sector_avg_change,2)}</td>
     </tr>`}).join(''):
-    '<tr><td colspan="17" class="loading">无符合条件的股票</td></tr>';
+    '<tr><td colspan="18" class="loading">无符合条件的股票</td></tr>';
   // 分页
   const pages=Math.max(1,Math.ceil(total/PAGE));
   if(page>pages)page=pages;
@@ -386,6 +393,7 @@ function resetFilters(){
   document.getElementById('f-delta').checked=false;
   document.getElementById('f-cmd').checked=false;
   document.getElementById('f-hh').checked=false;
+  document.getElementById('f-water').value='20';
   document.getElementById('f-seccompare').checked=false;
   document.querySelectorAll('#f-price button').forEach(b=>b.classList.toggle('on',b.dataset.v===''));
   document.querySelectorAll('#f-change button').forEach(b=>b.classList.toggle('on',b.dataset.v===''));
@@ -424,7 +432,7 @@ async function loadSnapshot(){
     document.getElementById('cacheinfo').textContent='数据源：东方财富(行情/财务/行业) + 腾讯(日K线) · 默认无筛选=全部数据 · 指标1=MA(合一,10) · 指标2=SUM(X>0,7)';
     applyFilters();
   }catch(e){
-    document.getElementById('tbody').innerHTML='<tr><td colspan="17" class="loading">数据加载中或暂无（首轮扫描未完成），30秒后自动重试</td></tr>';
+    document.getElementById('tbody').innerHTML='<tr><td colspan="18" class="loading">数据加载中或暂无（首轮扫描未完成），30秒后自动重试</td></tr>';
     setTimeout(loadSnapshot,30000);
   }
 }

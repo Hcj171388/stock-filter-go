@@ -58,6 +58,7 @@ type SelectStock struct {
 	DeltaUp  *bool    `json:"delta_up"` // DELTA 上穿0（今日>0 且 昨日≤0，TDX CROSS 语义）
 	CmdUp    *bool    `json:"cmd_up"`   // CMDIF 上穿 CMAD（TDX CROSS 语义）
 	HH       *float64 `json:"hh"`       // HH=HHV(CC,14), CC=(C-LLV(C,N))/(HHV(C,N)-LLV(C,N)), N=SUMBARS(VOL,CAPITAL)
+	Water    *float64 `json:"water"`    // 综合水位(0~100)：6周期(5/9/14/20/30/60)HHV/LLV水位加权，动态权重=当日首次上涨周期优先
 	SectorAvgChange *float64 `json:"sector_avg_change"` // 成分股平均涨跌幅：该行业所有成分股涨跌幅的平均值
 }
 
@@ -281,6 +282,8 @@ type KBar struct {
 	Date string  `json:"d"`
 	Open float64 `json:"o"`
 	Clse float64 `json:"c"`
+	High float64 `json:"h"`
+	Low  float64 `json:"l"`
 	Turn float64 `json:"t"`
 }
 
@@ -305,6 +308,10 @@ func parseKRow(item []interface{}) KBar {
 	b.Date, _ = item[0].(string)
 	b.Open = kNum(item[1])
 	b.Clse = kNum(item[2])
+	if len(item) > 4 {
+		b.High = kNum(item[3])
+		b.Low = kNum(item[4])
+	}
 	if len(item) > 7 {
 		b.Turn = kNum(item[7])
 	}
@@ -356,17 +363,30 @@ type klineEntry struct {
 }
 
 const klineCacheFile = "cache/kline_day.json"
+// klineCacheSchema: 缓存schema版本。KBar字段集合变化(如新增High/Low)时+1，旧缓存缺新字段(反序列化为0)会污染指标，版本不符即全量重拉
+const klineCacheSchema = 2
+
+type klineCacheWrap struct {
+	Schema  int                 `json:"schema"`
+	Entries map[string]klineEntry `json:"entries"`
+}
 
 func loadKlineCache() map[string]klineEntry {
 	out := map[string]klineEntry{}
-	if err := stocklib.CacheReadJSON(klineCacheFile, &out); err != nil {
+	var cf klineCacheWrap
+	if err := stocklib.CacheReadJSON(klineCacheFile, &cf); err != nil {
 		return out
 	}
-	return out
+	if cf.Schema != klineCacheSchema {
+		log.Printf("[kline] 缓存schema=%d != 当前%d，丢弃旧缓存强制全量重拉", cf.Schema, klineCacheSchema)
+		return out
+	}
+	return cf.Entries
 }
 
 func saveKlineCache(c map[string]klineEntry) {
-	if err := stocklib.CacheWriteJSON(klineCacheFile, c); err != nil {
+	cf := klineCacheWrap{Schema: klineCacheSchema, Entries: c}
+	if err := stocklib.CacheWriteJSON(klineCacheFile, &cf); err != nil {
 		log.Printf("[kline] 缓存保存失败: %v", err)
 	}
 }
@@ -695,6 +715,102 @@ func calcHH(b []KBar) *float64 {
 	rv := round2(hi)
 	return &rv
 }
+// calcWater 综合水位(0~100)，容器水位原理 - 动态权重（首次上涨触发）
+// N1~N6=5/9/14/20/30/60 各周期：水位=(CLOSE-LLV(LOW,N))/(HHV(HIGH,N)-LLV(LOW,N))
+// 动态权重：当日"首次上涨"周期（今日MA>昨日MA 且 昨日MA<=前日MA）按周期值分配权重；
+// 若无任何首次上涨，则全周期按周期值分配（大周期权重大）。需 >=60 根K线
+func calcWater(b []KBar) *float64 {
+	n := len(b)
+	if n < 60 {
+		return nil
+	}
+	closes := make([]float64, n)
+	for i := range b {
+		closes[i] = b[i].Clse
+	}
+	// 各周期均线序列
+	maSeries := make([][]float64, 6)
+	periods := []int{5, 9, 14, 20, 30, 60}
+	for p, period := range periods {
+		maSeries[p] = maSeriesOf(closes, period)
+	}
+	// 首次上涨判定
+	isFirst := make([]bool, 6)
+	for p := 0; p < 6; p++ {
+		maT := maSeries[p][n-1]
+		maY := maSeries[p][n-2]
+		maYY := maSeries[p][n-3]
+		isFirst[p] = maT > maY && maY <= maYY
+	}
+	anyFirst := false
+	for _, v := range isFirst {
+		if v {
+			anyFirst = true
+		}
+	}
+	// 动态权重
+	weightSum := 0.0
+	for p, f := range isFirst {
+		if anyFirst && f {
+			weightSum += float64(periods[p])
+		}
+	}
+	if !anyFirst {
+		for _, per := range periods {
+			weightSum += float64(per)
+		}
+	}
+	// 各周期水位
+	result := 0.0
+	for p, period := range periods {
+		// HHV/LLV 近 period 日
+		hh := math.Inf(-1)
+		ll := math.Inf(1)
+		for k := n - period; k < n; k++ {
+			if b[k].High > hh {
+				hh = b[k].High
+			}
+			if b[k].Low < ll {
+				ll = b[k].Low
+			}
+		}
+		waterVal := 0.5
+		if hh > ll {
+			waterVal = (b[n-1].Clse - ll) / (hh - ll)
+		}
+		// 权重
+		var w float64
+		if anyFirst {
+			if isFirst[p] {
+				w = float64(periods[p]) / weightSum
+			}
+		} else {
+			w = float64(periods[p]) / weightSum
+		}
+		result += waterVal * w
+	}
+	rv := round2(result * 100)
+	return &rv
+}
+
+// maSeriesOf 标准 MA 序列（逐日滑动均值）
+func maSeriesOf(values []float64, period int) []float64 {
+	out := make([]float64, len(values))
+	for i := range values {
+		if i < period-1 {
+			// 数据不够，用可用均值
+			out[i] = values[i]
+			continue
+		}
+		sum := 0.0
+		for j := i - period + 1; j <= i; j++ {
+			sum += values[j]
+		}
+		out[i] = sum / float64(period)
+	}
+	return out
+}
+
 // ============ 5. 净利润同比+公告日（10jqka业绩数据库 本地合并缓存）============
 // 缓存: /root/cow/data/yjgg.jsonl（scripts/fetch_yjgg_bootstrap.py 建仓, fetch_yjgg_daily.py 每日12:00增量）
 // 口径: 逐股取最新报告期; 同期内 notice>express>preview, 同种取 declare_date 最新; yoy 空值用上下限中值补
@@ -1005,12 +1121,14 @@ func scanOnce() *Snapshot {
 		var deltaUp *bool
 		var cmdUp *bool
 		var hh *float64
+		var water *float64
 		if arr, okK := klineMap[MarketSymbol(code)]; okK {
 			ind1 = calcInd1(arr)
 			ind2 = calcInd2(arr)
 			delta, deltaUp = calcDelta(arr)
 			cmdUp = calcCmdifCross(arr)
 			hh = calcHH(arr)
+			water = calcWater(arr)
 			if len(arr) > 0 && arr[len(arr)-1].Date > klineDate {
 				klineDate = arr[len(arr)-1].Date
 			}
@@ -1020,7 +1138,7 @@ func scanOnce() *Snapshot {
 			Change: toFloatPtr(it["f3"]), Turnover: toFloatPtr(it["f8"]),
 			Sector: toStrPtr(it["f100"]), NPYoy: fi.SJLTZ, PubDate: fi.Notice,
 			Ind1: ind1, Ind2: ind2, MainNet: mainNet, Efficiency: efficiency,
-			Delta: delta, DeltaUp: deltaUp, CmdUp: cmdUp, HH: hh,
+			Delta: delta, DeltaUp: deltaUp, CmdUp: cmdUp, HH: hh, Water: water,
 		})
 	}
 
